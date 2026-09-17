@@ -15,6 +15,8 @@ import { AuthGuard } from '@nestjs/passport';
 import type { Request as ExpressRequest } from 'express';
 
 import { WorkspaceAccessService } from '../workspaces/workspace-access.service.js';
+
+import { QueryHistoryService } from './query-history.service.js';
 import { QueryService } from './query.service.js';
 
 interface AuthenticatedRequest
@@ -31,17 +33,21 @@ interface ExecuteSqlBody {
 }
 
 @Controller(
-  'workspaces/:workspaceId/datasets',
+  'workspaces/:workspaceId',
 )
 @UseGuards(AuthGuard('jwt'))
 export class QueryController {
   constructor(
     private readonly queryService: QueryService,
 
+    private readonly queryHistoryService: QueryHistoryService,
+
     private readonly workspaceAccessService: WorkspaceAccessService,
   ) {}
 
-  @Get(':datasetId/preview')
+  @Get(
+    'datasets/:datasetId/preview',
+  )
   async previewDataset(
     @Param('workspaceId')
     workspaceId: string,
@@ -85,7 +91,9 @@ export class QueryController {
     );
   }
 
-  @Post(':datasetId/query')
+  @Post(
+    'datasets/:datasetId/query',
+  )
   async executeSql(
     @Param('workspaceId')
     workspaceId: string,
@@ -120,6 +128,51 @@ export class QueryController {
       workspaceId,
       userId,
       body.sql ?? '',
+    );
+  }
+
+  @Get('query-history')
+  async listQueryHistory(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Query('datasetId')
+    datasetId?: string,
+
+    @Query('limit')
+    limit?: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const parsedLimit =
+      limit !== undefined
+        ? Number(limit)
+        : 50;
+
+    return this.queryHistoryService.listForUser(
+      workspaceId,
+      userId,
+      datasetId,
+      Number.isFinite(parsedLimit)
+        ? parsedLimit
+        : 50,
     );
   }
 }

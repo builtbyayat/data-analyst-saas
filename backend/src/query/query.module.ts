@@ -7,6 +7,7 @@ import { WorkspacesModule } from '../workspaces/workspaces.module.js';
 import { DuckDBService } from './duckdb.service.js';
 import { QueryController } from './query.controller.js';
 import { QueryHistory } from './query-history.entity.js';
+import { QueryHistoryService } from './query-history.service.js';
 import { QueryService } from './query.service.js';
 import { SqlValidatorService } from './sql-validator.service.js';
 
@@ -27,12 +28,14 @@ import { SqlValidatorService } from './sql-validator.service.js';
   providers: [
     DuckDBService,
     QueryService,
+    QueryHistoryService,
     SqlValidatorService,
   ],
 
   exports: [
     DuckDBService,
     QueryService,
+    QueryHistoryService,
     SqlValidatorService,
   ],
 })
