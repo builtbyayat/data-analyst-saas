@@ -8,6 +8,7 @@ import { Workspace } from './workspaces/workspace.entity.js';
 import { WorkspaceMember } from './workspaces/workspace-member.entity.js';
 import { Dataset } from './datasets/dataset.entity.js';
 import { DatasetColumn } from './datasets/dataset-column.entity.js';
+import { QueryHistory } from './query/query-history.entity.js';
 
 const dataSource = new DataSource({
   type: 'postgres',
@@ -34,6 +35,7 @@ const dataSource = new DataSource({
     WorkspaceMember,
     Dataset,
     DatasetColumn,
+    QueryHistory,
   ],
 
   migrations: [

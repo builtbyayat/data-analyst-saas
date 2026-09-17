@@ -118,6 +118,7 @@ export class QueryController {
     return this.queryService.executeSql(
       datasetId,
       workspaceId,
+      userId,
       body.sql ?? '',
     );
   }

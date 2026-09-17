@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { Dataset } from '../datasets/dataset.entity.js';
 import { StorageService } from '../storage/storage.service.js';
 import { DuckDBService } from './duckdb.service.js';
+import { QueryHistory } from './query-history.entity.js';
 import { SqlValidatorService } from './sql-validator.service.js';
 
 export interface DatasetQueryResult {
@@ -33,6 +34,9 @@ export class QueryService {
   constructor(
     @InjectRepository(Dataset)
     private readonly datasetRepository: Repository<Dataset>,
+
+    @InjectRepository(QueryHistory)
+    private readonly queryHistoryRepository: Repository<QueryHistory>,
 
     private readonly storageService: StorageService,
 
@@ -185,22 +189,70 @@ export class QueryService {
   async executeSql(
     datasetId: string,
     workspaceId: string,
+    userId: string,
     sql: string,
   ): Promise<DatasetQueryResult> {
-    const dataset =
-      await this.getDataset(
-        datasetId,
-        workspaceId,
+    const startedAt = Date.now();
+
+    let dataset: Dataset;
+
+    try {
+      dataset =
+        await this.getDataset(
+          datasetId,
+          workspaceId,
+        );
+
+      const validatedSql =
+        this.sqlValidatorService.validate(
+          sql,
+        );
+
+      const result =
+        await this.executeAgainstDataset(
+          dataset,
+          validatedSql,
+        );
+
+      await this.queryHistoryRepository.save(
+        this.queryHistoryRepository.create({
+          workspaceId,
+          datasetId,
+          userId,
+          sql: validatedSql,
+          rowCount: result.rowCount,
+          executionTimeMs:
+            result.executionTimeMs,
+          status: 'success',
+          errorMessage: null,
+        }),
       );
 
-    const validatedSql =
-      this.sqlValidatorService.validate(
-        sql,
+      return result;
+    } catch (error) {
+      const executionTimeMs =
+        Date.now() - startedAt;
+
+      await this.queryHistoryRepository.save(
+        this.queryHistoryRepository.create({
+          workspaceId,
+          datasetId,
+          userId,
+          sql,
+          rowCount: null,
+          executionTimeMs,
+          status: 'failed',
+          errorMessage:
+            error instanceof Error
+              ? error.message.slice(
+                  0,
+                  4000,
+                )
+              : 'Unknown query execution error',
+        }),
       );
 
-    return this.executeAgainstDataset(
-      dataset,
-      validatedSql,
-    );
+      throw error;
+    }
   }
 }
