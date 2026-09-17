@@ -1,15 +1,23 @@
 import {
   CreateBucketCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadBucketCommand,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import { Injectable, OnModuleInit } from '@nestjs/common';
+
+import {
+  Injectable,
+  OnModuleInit,
+} from '@nestjs/common';
+
 import { ConfigService } from '@nestjs/config';
 
 @Injectable()
-export class StorageService implements OnModuleInit {
+export class StorageService
+  implements OnModuleInit
+{
   private readonly client: S3Client;
   private readonly bucket: string;
 
@@ -17,14 +25,16 @@ export class StorageService implements OnModuleInit {
     private readonly configService: ConfigService,
   ) {
     this.client = new S3Client({
-      region: this.configService.get<string>(
-        'S3_REGION',
-        'us-east-1',
-      ),
+      region:
+        this.configService.get<string>(
+          'S3_REGION',
+          'us-east-1',
+        ),
 
-      endpoint: this.configService.get<string>(
-        'S3_ENDPOINT',
-      ),
+      endpoint:
+        this.configService.get<string>(
+          'S3_ENDPOINT',
+        ),
 
       forcePathStyle:
         this.configService.get<string>(
@@ -47,10 +57,11 @@ export class StorageService implements OnModuleInit {
       },
     });
 
-    this.bucket = this.configService.get<string>(
-      'S3_BUCKET',
-      'datasets',
-    );
+    this.bucket =
+      this.configService.get<string>(
+        'S3_BUCKET',
+        'datasets',
+      );
   }
 
   async onModuleInit(): Promise<void> {
@@ -88,7 +99,32 @@ export class StorageService implements OnModuleInit {
     );
   }
 
-  async delete(key: string): Promise<void> {
+  async download(
+    key: string,
+  ): Promise<Buffer> {
+    const response =
+      await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+        }),
+      );
+
+    if (!response.Body) {
+      throw new Error(
+        'Object storage returned an empty body',
+      );
+    }
+
+    const bytes =
+      await response.Body.transformToByteArray();
+
+    return Buffer.from(bytes);
+  }
+
+  async delete(
+    key: string,
+  ): Promise<void> {
     await this.client.send(
       new DeleteObjectCommand({
         Bucket: this.bucket,

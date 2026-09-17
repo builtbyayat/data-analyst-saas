@@ -2,14 +2,21 @@ import {
   Injectable,
   OnModuleDestroy,
 } from '@nestjs/common';
+
 import {
   DuckDBConnection,
   DuckDBInstance,
 } from '@duckdb/node-api';
 
+export interface DuckDBQueryResult {
+  columns: string[];
+  rows: unknown[][];
+}
+
 @Injectable()
 export class DuckDBService implements OnModuleDestroy {
   private instance: DuckDBInstance | null = null;
+
   private connection: DuckDBConnection | null = null;
 
   async initialize(): Promise<void> {
@@ -26,7 +33,7 @@ export class DuckDBService implements OnModuleDestroy {
 
   async query(
     sql: string,
-  ): Promise<unknown[][]> {
+  ): Promise<DuckDBQueryResult> {
     await this.initialize();
 
     if (!this.connection) {
@@ -40,12 +47,22 @@ export class DuckDBService implements OnModuleDestroy {
         sql,
       );
 
-    return reader.getRows();
+    const columns =
+      reader.columnNames();
+
+    const rows =
+      reader.getRowsJson() as unknown[][];
+
+    return {
+      columns,
+      rows,
+    };
   }
 
   async onModuleDestroy(): Promise<void> {
     if (this.connection) {
       this.connection.disconnectSync();
+
       this.connection = null;
     }
 
