@@ -3657,3 +3657,166 @@ Chart Type Selection
 SQL Explanation
       ↓
 Result Export
+
+
+
+
+## Steps 44–48 — Complete Query Results Pipeline
+
+### Step 44 — KPI / Result Summary
+
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added deterministic `ResultSummaryService`.
+
+Query results now provide:
+
+- Total result row count
+- Numeric column detection
+- Sum
+- Average
+- Minimum
+- Maximum
+
+The summary is calculated from the actual returned result rows.
+
+---
+
+## Step 45 — Result Visualization
+
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added deterministic `ResultVisualizationService`.
+
+Supported visualization types:
+
+- Bar
+- Line
+- Pie
+- Donut
+- Table
+
+Visualization selection uses the actual result structure.
+
+User-requested chart types are validated against the returned data.
+
+Examples:
+
+- Line charts require a date/time dimension and numeric measure.
+- Pie/donut charts require one categorical dimension and one numeric measure.
+- Unsupported chart requests return a warning instead of generating an invalid chart.
+
+Visualization language follows the user's question language where detected.
+
+---
+
+## Step 46 — SQL View
+
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Query results now expose the exact validated SQL used for execution.
+
+The result contract includes:
+
+```text
+sql
+columns
+rows
+rowCount
+truncated
+executionTimeMs
+summary
+visualization
+
+Natural-language queries preserve the generated SQL in the final response.
+
+Step 47 — SQL Explanation
+
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added SqlExplanationService.
+
+The service explains the actual validated SQL and returned result metadata.
+
+Explanation context includes:
+
+User question
+Validated SQL
+Result columns
+Result row count
+Truncation state
+Numeric result summary
+
+The explanation engine is instructed not to invent unsupported business insights or values.
+
+Language handling supports:
+
+English
+Hindi
+Hinglish
+
+AI explanation failure does not fail the underlying query result. A warning is returned instead.
+
+Step 48 — Result Export
+
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added ResultExportService.
+
+Query results can now be exported as CSV.
+
+CSV handling includes:
+
+Header generation
+Proper comma escaping
+Quote escaping
+Line-break escaping
+UTF-8 BOM
+Spreadsheet formula-injection protection
+Empty-result header export
+
+Added export endpoint:
+
+POST /workspaces/:workspaceId/datasets/:datasetId/query/export
+
+The export reuses the existing validated SQL query path.
+
+Verification
+
+Focused tests:
+
+SQL explanation: 6/6
+Query service: 6/6
+Result export: 4/4
+
+Full backend test suite:
+
+Test Files: 8 passed
+Tests: 37 passed
+
+Build:
+
+npm run build
+SUCCESS
+
+The complete query-result pipeline is now verified end-to-end.

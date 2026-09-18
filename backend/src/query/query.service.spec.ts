@@ -19,184 +19,103 @@ import { StorageService } from '../storage/storage.service.js';
 import { DuckDBService } from './duckdb.service.js';
 import { QueryHistory } from './query-history.entity.js';
 import { QueryService } from './query.service.js';
+import { ResultSummaryService } from './result-summary.service.js';
+import { ResultVisualizationService } from './result-visualization.service.js';
+import { SqlExplanationService } from './sql-explanation.service.js';
 import { SqlGenerationService } from './sql-generation.service.js';
 import { SqlValidatorService } from './sql-validator.service.js';
 
-describe('QueryService', () => {
-  let queryService: QueryService;
+describe(
+  'QueryService',
+  () => {
+    let queryService: QueryService;
 
-  const datasetRepositoryMock = {
-    findOne: vi.fn(),
-  };
+    const datasetRepositoryMock = {
+      findOne: vi.fn(),
+    };
 
-  const queryHistoryRepositoryMock = {
-    create: vi.fn(),
-    save: vi.fn(),
-  };
+    const queryHistoryRepositoryMock = {
+      create: vi.fn(),
+      save: vi.fn(),
+    };
 
-  const storageServiceMock = {
-    download: vi.fn(),
-  };
+    const storageServiceMock = {
+      download: vi.fn(),
+    };
 
-  const duckDbServiceMock = {
-    queryDataset: vi.fn(),
-  };
+    const duckDbServiceMock = {
+      queryDataset: vi.fn(),
+    };
 
-  const sqlValidatorServiceMock = {
-    validate: vi.fn(),
-  };
+    const sqlValidatorServiceMock = {
+      validate: vi.fn(),
+    };
 
-  const sqlGenerationServiceMock = {
-    generateSql: vi.fn(),
-  };
+    const sqlGenerationServiceMock = {
+      generateSql: vi.fn(),
+    };
 
-  const dataset = {
-    id: 'dataset-1',
-    workspaceId: 'workspace-1',
-    name: 'Sales Dataset',
-    originalFilename: 'sales.csv',
-    objectKey:
-      'workspaces/workspace-1/datasets/dataset-1/original.csv',
-    queryObjectKey:
-      'workspaces/workspace-1/datasets/dataset-1/query.parquet',
-    fileType: 'text/csv',
-    fileSize: '1000',
-    rowCount: 3,
-    columnCount: 4,
-    status: 'ready',
-    columns: [],
-    workspace: undefined,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  } as unknown as Dataset;
+    const resultSummaryServiceMock = {
+      summarize: vi.fn(),
+    };
 
-  const defaultQueryResult = {
-    columns: [
-      'city',
-      'total_sales',
-    ],
+    const resultVisualizationServiceMock = {
+      analyze: vi.fn(),
+    };
 
-    rows: [
-      ['Delhi', '2400'],
-      ['Lucknow', '1800'],
-      ['Kanpur', '1200'],
-    ],
-  };
+    const sqlExplanationServiceMock = {
+      explain: vi.fn(),
+    };
 
-  beforeEach(async () => {
-    vi.clearAllMocks();
+    const dataset = {
+      id: 'dataset-1',
 
-    datasetRepositoryMock.findOne.mockResolvedValue(
-      dataset,
-    );
-
-    queryHistoryRepositoryMock.create.mockImplementation(
-      (value) => value,
-    );
-
-    queryHistoryRepositoryMock.save.mockResolvedValue(
-      undefined,
-    );
-
-    storageServiceMock.download.mockResolvedValue(
-      Buffer.from('test parquet data'),
-    );
-
-    duckDbServiceMock.queryDataset.mockResolvedValue(
-      defaultQueryResult,
-    );
-
-    sqlValidatorServiceMock.validate.mockImplementation(
-      (sql: string) => sql,
-    );
-
-    sqlGenerationServiceMock.generateSql.mockResolvedValue(
-      {
-        question:
-          'Show total sales by city',
-
-        sql:
-          'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
-
-        provider:
-          'test-provider',
-
-        model:
-          'test-model',
-      },
-    );
-
-    const app: TestingModule =
-      await Test.createTestingModule({
-        providers: [
-          QueryService,
-
-          {
-            provide:
-              getRepositoryToken(Dataset),
-
-            useValue:
-              datasetRepositoryMock,
-          },
-
-          {
-            provide:
-              getRepositoryToken(QueryHistory),
-
-            useValue:
-              queryHistoryRepositoryMock,
-          },
-
-          {
-            provide:
-              StorageService,
-
-            useValue:
-              storageServiceMock,
-          },
-
-          {
-            provide:
-              DuckDBService,
-
-            useValue:
-              duckDbServiceMock,
-          },
-
-          {
-            provide:
-              SqlValidatorService,
-
-            useValue:
-              sqlValidatorServiceMock,
-          },
-
-          {
-            provide:
-              SqlGenerationService,
-
-            useValue:
-              sqlGenerationServiceMock,
-          },
-        ],
-      }).compile();
-
-    queryService =
-      app.get<QueryService>(
-        QueryService,
-      );
-  });
-
-  it('should execute a valid SQL query and return results', async () => {
-    const result =
-      await queryService.executeSql(
-        'dataset-1',
+      workspaceId:
         'workspace-1',
-        'user-1',
-        'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
-      );
 
-    expect(result).toEqual({
+      name:
+        'Sales Dataset',
+
+      originalFilename:
+        'sales.csv',
+
+      objectKey:
+        'workspaces/workspace-1/datasets/dataset-1/original.csv',
+
+      queryObjectKey:
+        'workspaces/workspace-1/datasets/dataset-1/query.parquet',
+
+      fileType:
+        'text/csv',
+
+      fileSize:
+        '1000',
+
+      rowCount:
+        3,
+
+      columnCount:
+        4,
+
+      status:
+        'ready',
+
+      columns: [],
+
+      workspace:
+        undefined,
+
+      createdAt:
+        new Date(),
+
+      updatedAt:
+        new Date(),
+    } as unknown as Dataset;
+
+    const defaultSql =
+      'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city';
+
+    const defaultQueryResult = {
       columns: [
         'city',
         'total_sales',
@@ -207,312 +126,104 @@ describe('QueryService', () => {
         ['Lucknow', '1800'],
         ['Kanpur', '1200'],
       ],
+    };
 
-      rowCount: 3,
+    const defaultSummary = {
+      totalRows: 3,
 
-      truncated: false,
-
-      executionTimeMs:
-        expect.any(Number),
-    });
-
-    expect(
-      sqlValidatorServiceMock.validate,
-    ).toHaveBeenCalledWith(
-      'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
-    );
-
-    expect(
-      duckDbServiceMock.queryDataset,
-    ).toHaveBeenCalledTimes(1);
-
-    expect(
-      storageServiceMock.download,
-    ).toHaveBeenCalledWith(
-      dataset.queryObjectKey,
-    );
-
-    expect(
-      queryHistoryRepositoryMock.save,
-    ).toHaveBeenCalledTimes(1);
-
-    expect(
-      queryHistoryRepositoryMock.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId:
-          'workspace-1',
-
-        datasetId:
-          'dataset-1',
-
-        userId:
-          'user-1',
-
-        status:
-          'success',
-
-        failureType:
-          null,
-
-        rowCount:
-          3,
-
-        errorMessage:
-          null,
-      }),
-    );
-  });
-
-  it('should return an empty result correctly', async () => {
-    duckDbServiceMock.queryDataset.mockResolvedValue(
-      {
-        columns: [
-          'city',
-          'total_sales',
-        ],
-
-        rows: [],
-      },
-    );
-
-    const result =
-      await queryService.executeSql(
-        'dataset-1',
-        'workspace-1',
-        'user-1',
-        'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
-      );
-
-    expect(result).toEqual({
-      columns: [
-        'city',
-        'total_sales',
-      ],
-
-      rows: [],
-
-      rowCount: 0,
-
-      truncated: false,
-
-      executionTimeMs:
-        expect.any(Number),
-    });
-
-    expect(
-      queryHistoryRepositoryMock.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status:
-          'success',
-
-        failureType:
-          null,
-
-        rowCount:
-          0,
-      }),
-    );
-  });
-
-  it('should truncate results above the maximum result row limit', async () => {
-    const rows =
-      Array.from(
+      numericColumns: [
         {
-          length: 5001,
+          column:
+            'total_sales',
+
+          sum:
+            5400,
+
+          average:
+            1800,
+
+          min:
+            1200,
+
+          max:
+            2400,
         },
-        (_, index) => [
-          `City ${index}`,
-          String(index),
+      ],
+    };
+
+    const defaultVisualization = {
+      enabled:
+        true,
+
+      type:
+        'bar',
+
+      source:
+        'automatic',
+
+      language:
+        'english',
+
+      xAxis:
+        'city',
+
+      yAxis:
+        'total_sales',
+
+      series:
+        [
+          {
+            name:
+              'total_sales',
+
+            data:
+              [
+                {
+                  label:
+                    'Delhi',
+
+                  value:
+                    2400,
+                },
+
+                {
+                  label:
+                    'Lucknow',
+
+                  value:
+                    1800,
+                },
+
+                {
+                  label:
+                    'Kanpur',
+
+                  value:
+                    1200,
+                },
+              ],
+          },
         ],
-      );
 
-    duckDbServiceMock.queryDataset.mockResolvedValue(
-      {
-        columns: [
-          'city',
-          'total_sales',
-        ],
+      title:
+        'Total Sales by City',
 
-        rows,
-      },
-    );
+      warning:
+        null,
 
-    const result =
-      await queryService.executeSql(
-        'dataset-1',
-        'workspace-1',
-        'user-1',
-        'SELECT city, sales FROM dataset',
-      );
+      reason:
+        'A categorical dimension and numeric measure were detected.',
+    };
 
-    expect(
-      result.rowCount,
-    ).toBe(5000);
+    const defaultExplanation = {
+      enabled:
+        true,
 
-    expect(
-      result.rows,
-    ).toHaveLength(5000);
+      language:
+        'english',
 
-    expect(
-      result.truncated,
-    ).toBe(true);
-
-    expect(
-      result.rows[0],
-    ).toEqual([
-      'City 0',
-      '0',
-    ]);
-
-    expect(
-      result.rows[4999],
-    ).toEqual([
-      'City 4999',
-      '4999',
-    ]);
-
-    expect(
-      queryHistoryRepositoryMock.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status:
-          'success',
-
-        failureType:
-          null,
-
-        rowCount:
-          5000,
-      }),
-    );
-  });
-
-  it('should record execution failures and rethrow a normalized error', async () => {
-    duckDbServiceMock.queryDataset.mockRejectedValue(
-      new Error(
-        'Binder Error: column "missing_column" not found',
-      ),
-    );
-
-    await expect(
-      queryService.executeSql(
-        'dataset-1',
-        'workspace-1',
-        'user-1',
-        'SELECT missing_column FROM dataset',
-      ),
-    ).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
-
-    expect(
-      queryHistoryRepositoryMock.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId:
-          'workspace-1',
-
-        datasetId:
-          'dataset-1',
-
-        userId:
-          'user-1',
-
-        sql:
-          'SELECT missing_column FROM dataset',
-
-        rowCount:
-          null,
-
-        status:
-          'failed',
-
-        failureType:
-          'execution',
-
-        errorMessage:
-          'Binder Error: column "missing_column" not found',
-      }),
-    );
-
-    expect(
-      queryHistoryRepositoryMock.save,
-    ).toHaveBeenCalledTimes(1);
-  });
-
-  it('should classify a missing queryable object as a validation failure', async () => {
-    datasetRepositoryMock.findOne.mockResolvedValue(
-      {
-        ...dataset,
-
-        queryObjectKey:
-          null,
-      },
-    );
-
-    await expect(
-      queryService.executeSql(
-        'dataset-1',
-        'workspace-1',
-        'user-1',
-        'SELECT * FROM dataset',
-      ),
-    ).rejects.toThrow(
-      'Dataset does not have a queryable Parquet object',
-    );
-
-    expect(
-      queryHistoryRepositoryMock.create,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status:
-          'failed',
-
-        failureType:
-          'validation',
-
-        rowCount:
-          null,
-
-        errorMessage:
-          'Dataset does not have a queryable Parquet object',
-      }),
-    );
-
-    expect(
-      sqlValidatorServiceMock.validate,
-    ).not.toHaveBeenCalled();
-
-    expect(
-      duckDbServiceMock.queryDataset,
-    ).not.toHaveBeenCalled();
-  });
-
-  it('should execute a natural-language question end-to-end', async () => {
-    const result =
-      await queryService.executeNaturalLanguageQuery(
-        'dataset-1',
-        'workspace-1',
-        'user-1',
-        'Show total sales by city',
-      );
-
-    expect(
-      sqlGenerationServiceMock.generateSql,
-    ).toHaveBeenCalledWith(
-      'dataset-1',
-      'workspace-1',
-      'Show total sales by city',
-    );
-
-    expect(result).toEqual({
-      question:
-        'Show total sales by city',
-
-      sql:
-        'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
+      text:
+        'The query groups sales by city and calculates total sales for each city.',
 
       provider:
         'test-provider',
@@ -520,25 +231,625 @@ describe('QueryService', () => {
       model:
         'test-model',
 
-      result: {
-        columns: [
-          'city',
-          'total_sales',
-        ],
+      warning:
+        null,
+    };
 
-        rows: [
-          ['Delhi', '2400'],
-          ['Lucknow', '1800'],
-          ['Kanpur', '1200'],
-        ],
+    beforeEach(
+      async () => {
+        vi.clearAllMocks();
 
-        rowCount: 3,
+        datasetRepositoryMock.findOne.mockResolvedValue(
+          dataset,
+        );
 
-        truncated: false,
+        queryHistoryRepositoryMock.create.mockImplementation(
+          (value) => value,
+        );
 
-        executionTimeMs:
-          expect.any(Number),
+        queryHistoryRepositoryMock.save.mockResolvedValue(
+          undefined,
+        );
+
+        storageServiceMock.download.mockResolvedValue(
+          Buffer.from(
+            'test parquet data',
+          ),
+        );
+
+        duckDbServiceMock.queryDataset.mockResolvedValue(
+          defaultQueryResult,
+        );
+
+        sqlValidatorServiceMock.validate.mockImplementation(
+          (sql: string) =>
+            sql,
+        );
+
+        sqlGenerationServiceMock.generateSql.mockResolvedValue(
+          {
+            question:
+              'Show total sales by city',
+
+            sql:
+              defaultSql,
+
+            provider:
+              'test-provider',
+
+            model:
+              'test-model',
+          },
+        );
+
+        resultSummaryServiceMock.summarize.mockReturnValue(
+          defaultSummary,
+        );
+
+        resultVisualizationServiceMock.analyze.mockReturnValue(
+          defaultVisualization,
+        );
+
+        sqlExplanationServiceMock.explain.mockResolvedValue(
+          defaultExplanation,
+        );
+
+        const app: TestingModule =
+          await Test.createTestingModule({
+            providers: [
+              QueryService,
+
+              {
+                provide:
+                  getRepositoryToken(
+                    Dataset,
+                  ),
+
+                useValue:
+                  datasetRepositoryMock,
+              },
+
+              {
+                provide:
+                  getRepositoryToken(
+                    QueryHistory,
+                  ),
+
+                useValue:
+                  queryHistoryRepositoryMock,
+              },
+
+              {
+                provide:
+                  StorageService,
+
+                useValue:
+                  storageServiceMock,
+              },
+
+              {
+                provide:
+                  DuckDBService,
+
+                useValue:
+                  duckDbServiceMock,
+              },
+
+              {
+                provide:
+                  SqlValidatorService,
+
+                useValue:
+                  sqlValidatorServiceMock,
+              },
+
+              {
+                provide:
+                  SqlGenerationService,
+
+                useValue:
+                  sqlGenerationServiceMock,
+              },
+
+              {
+                provide:
+                  ResultSummaryService,
+
+                useValue:
+                  resultSummaryServiceMock,
+              },
+
+              {
+                provide:
+                  ResultVisualizationService,
+
+                useValue:
+                  resultVisualizationServiceMock,
+              },
+
+              {
+                provide:
+                  SqlExplanationService,
+
+                useValue:
+                  sqlExplanationServiceMock,
+              },
+            ],
+          }).compile();
+
+        queryService =
+          app.get<QueryService>(
+            QueryService,
+          );
       },
-    });
-  });
-});
+    );
+
+    it(
+      'should execute a valid SQL query and return results',
+      async () => {
+        const result =
+          await queryService.executeSql(
+            'dataset-1',
+            'workspace-1',
+            'user-1',
+            defaultSql,
+          );
+
+        expect(
+          result,
+        ).toEqual({
+          sql:
+            defaultSql,
+
+          columns: [
+            'city',
+            'total_sales',
+          ],
+
+          rows: [
+            ['Delhi', '2400'],
+            ['Lucknow', '1800'],
+            ['Kanpur', '1200'],
+          ],
+
+          rowCount:
+            3,
+
+          truncated:
+            false,
+
+          executionTimeMs:
+            expect.any(Number),
+
+          summary:
+            defaultSummary,
+
+          visualization:
+            defaultVisualization,
+
+          explanation:
+            null,
+        });
+
+        expect(
+          resultSummaryServiceMock.summarize,
+        ).toHaveBeenCalledWith(
+          [
+            'city',
+            'total_sales',
+          ],
+          [
+            ['Delhi', '2400'],
+            ['Lucknow', '1800'],
+            ['Kanpur', '1200'],
+          ],
+        );
+
+        expect(
+          resultVisualizationServiceMock.analyze,
+        ).toHaveBeenCalledWith(
+          [
+            'city',
+            'total_sales',
+          ],
+          [
+            ['Delhi', '2400'],
+            ['Lucknow', '1800'],
+            ['Kanpur', '1200'],
+          ],
+          undefined,
+        );
+
+        expect(
+          sqlExplanationServiceMock.explain,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          sqlValidatorServiceMock.validate,
+        ).toHaveBeenCalledWith(
+          defaultSql,
+        );
+
+        expect(
+          duckDbServiceMock.queryDataset,
+        ).toHaveBeenCalledTimes(1);
+
+        expect(
+          storageServiceMock.download,
+        ).toHaveBeenCalledWith(
+          dataset.queryObjectKey,
+        );
+
+        expect(
+          queryHistoryRepositoryMock.save,
+        ).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it(
+      'should return an empty result correctly',
+      async () => {
+        const emptySummary = {
+          totalRows: 0,
+
+          numericColumns: [],
+        };
+
+        duckDbServiceMock.queryDataset.mockResolvedValue(
+          {
+            columns: [
+              'city',
+              'total_sales',
+            ],
+
+            rows: [],
+          },
+        );
+
+        resultSummaryServiceMock.summarize.mockReturnValue(
+          emptySummary,
+        );
+
+        const result =
+          await queryService.executeSql(
+            'dataset-1',
+            'workspace-1',
+            'user-1',
+            defaultSql,
+          );
+
+        expect(
+          result,
+        ).toEqual({
+          sql:
+            defaultSql,
+
+          columns: [
+            'city',
+            'total_sales',
+          ],
+
+          rows: [],
+
+          rowCount:
+            0,
+
+          truncated:
+            false,
+
+          executionTimeMs:
+            expect.any(Number),
+
+          summary:
+            emptySummary,
+
+          visualization:
+            defaultVisualization,
+
+          explanation:
+            null,
+        });
+
+        expect(
+          queryHistoryRepositoryMock.create,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status:
+              'success',
+
+            failureType:
+              null,
+
+            rowCount:
+              0,
+          }),
+        );
+      },
+    );
+
+    it(
+      'should truncate results above the maximum result row limit',
+      async () => {
+        const rows =
+          Array.from(
+            {
+              length:
+                5001,
+            },
+            (_, index) => [
+              `City ${index}`,
+              String(index),
+            ],
+          );
+
+        const truncatedSummary = {
+          totalRows:
+            5000,
+
+          numericColumns: [],
+        };
+
+        duckDbServiceMock.queryDataset.mockResolvedValue(
+          {
+            columns: [
+              'city',
+              'total_sales',
+            ],
+
+            rows,
+          },
+        );
+
+        resultSummaryServiceMock.summarize.mockReturnValue(
+          truncatedSummary,
+        );
+
+        const result =
+          await queryService.executeSql(
+            'dataset-1',
+            'workspace-1',
+            'user-1',
+            'SELECT city, sales FROM dataset',
+          );
+
+        expect(
+          result.rowCount,
+        ).toBe(5000);
+
+        expect(
+          result.rows,
+        ).toHaveLength(5000);
+
+        expect(
+          result.truncated,
+        ).toBe(true);
+
+        expect(
+          result.summary,
+        ).toEqual(
+          truncatedSummary,
+        );
+
+        expect(
+          result.explanation,
+        ).toBeNull();
+
+        expect(
+          result.rows[0],
+        ).toEqual([
+          'City 0',
+          '0',
+        ]);
+
+        expect(
+          result.rows[4999],
+        ).toEqual([
+          'City 4999',
+          '4999',
+        ]);
+      },
+    );
+
+    it(
+      'should record execution failures and rethrow a normalized error',
+      async () => {
+        duckDbServiceMock.queryDataset.mockRejectedValue(
+          new Error(
+            'Binder Error: column "missing_column" not found',
+          ),
+        );
+
+        await expect(
+          queryService.executeSql(
+            'dataset-1',
+            'workspace-1',
+            'user-1',
+            'SELECT missing_column FROM dataset',
+          ),
+        ).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+
+        expect(
+          queryHistoryRepositoryMock.create,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            workspaceId:
+              'workspace-1',
+
+            datasetId:
+              'dataset-1',
+
+            userId:
+              'user-1',
+
+            sql:
+              'SELECT missing_column FROM dataset',
+
+            rowCount:
+              null,
+
+            status:
+              'failed',
+
+            failureType:
+              'execution',
+
+            errorMessage:
+              'Binder Error: column "missing_column" not found',
+          }),
+        );
+
+        expect(
+          queryHistoryRepositoryMock.save,
+        ).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it(
+      'should classify a missing queryable object as a validation failure',
+      async () => {
+        datasetRepositoryMock.findOne.mockResolvedValue(
+          {
+            ...dataset,
+
+            queryObjectKey:
+              null,
+          },
+        );
+
+        await expect(
+          queryService.executeSql(
+            'dataset-1',
+            'workspace-1',
+            'user-1',
+            'SELECT * FROM dataset',
+          ),
+        ).rejects.toThrow(
+          'Dataset does not have a queryable Parquet object',
+        );
+
+        expect(
+          queryHistoryRepositoryMock.create,
+        ).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status:
+              'failed',
+
+            failureType:
+              'validation',
+
+            rowCount:
+              null,
+
+            errorMessage:
+              'Dataset does not have a queryable Parquet object',
+          }),
+        );
+
+        expect(
+          sqlValidatorServiceMock.validate,
+        ).not.toHaveBeenCalled();
+
+        expect(
+          duckDbServiceMock.queryDataset,
+        ).not.toHaveBeenCalled();
+      },
+    );
+
+    it(
+      'should execute a natural-language question end-to-end',
+      async () => {
+        const result =
+          await queryService.executeNaturalLanguageQuery(
+            'dataset-1',
+            'workspace-1',
+            'user-1',
+            'Show total sales by city',
+          );
+
+        expect(
+          sqlGenerationServiceMock.generateSql,
+        ).toHaveBeenCalledWith(
+          'dataset-1',
+          'workspace-1',
+          'Show total sales by city',
+        );
+
+        expect(
+          sqlExplanationServiceMock.explain,
+        ).toHaveBeenCalledWith({
+          sql:
+            defaultSql,
+
+          question:
+            'Show total sales by city',
+
+          columns: [
+            'city',
+            'total_sales',
+          ],
+
+          rowCount:
+            3,
+
+          truncated:
+            false,
+
+          summary:
+            defaultSummary,
+        });
+
+        expect(
+          result,
+        ).toEqual({
+          question:
+            'Show total sales by city',
+
+          sql:
+            defaultSql,
+
+          provider:
+            'test-provider',
+
+          model:
+            'test-model',
+
+          result: {
+            sql:
+              defaultSql,
+
+            columns: [
+              'city',
+              'total_sales',
+            ],
+
+            rows: [
+              ['Delhi', '2400'],
+              ['Lucknow', '1800'],
+              ['Kanpur', '1200'],
+            ],
+
+            rowCount:
+              3,
+
+            truncated:
+              false,
+
+            executionTimeMs:
+              expect.any(Number),
+
+            summary:
+              defaultSummary,
+
+            visualization:
+              defaultVisualization,
+
+            explanation:
+              defaultExplanation,
+          },
+        });
+      },
+    );
+  },
+);

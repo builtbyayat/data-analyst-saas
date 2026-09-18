@@ -6,19 +6,36 @@ import {
   Post,
   Query,
   Request,
+  StreamableFile,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 
 import { AuthGuard } from '@nestjs/passport';
 
-import type { Request as ExpressRequest } from 'express';
+import type {
+  Request as ExpressRequest,
+} from 'express';
 
-import { WorkspaceAccessService } from '../workspaces/workspace-access.service.js';
+import {
+  WorkspaceAccessService,
+} from '../workspaces/workspace-access.service.js';
 
-import { QueryHistoryService } from './query-history.service.js';
-import { QueryService } from './query.service.js';
-import { SqlGenerationService } from './sql-generation.service.js';
+import {
+  QueryHistoryService,
+} from './query-history.service.js';
+
+import {
+  QueryService,
+} from './query.service.js';
+
+import {
+  ResultExportService,
+} from './result-export.service.js';
+
+import {
+  SqlGenerationService,
+} from './sql-generation.service.js';
 
 interface AuthenticatedRequest
   extends ExpressRequest {
@@ -31,6 +48,8 @@ interface AuthenticatedRequest
 
 interface ExecuteSqlBody {
   sql?: string;
+
+  question?: string;
 }
 
 interface GenerateSqlBody {
@@ -54,6 +73,8 @@ export class QueryController {
     private readonly sqlGenerationService: SqlGenerationService,
 
     private readonly workspaceAccessService: WorkspaceAccessService,
+
+    private readonly resultExportService: ResultExportService,
   ) {}
 
   @Get(
@@ -96,7 +117,9 @@ export class QueryController {
     return this.queryService.previewDataset(
       datasetId,
       workspaceId,
-      Number.isFinite(parsedLimit)
+      Number.isFinite(
+        parsedLimit,
+      )
         ? parsedLimit
         : 100,
     );
@@ -178,6 +201,8 @@ export class QueryController {
       workspaceId,
       userId,
       body.sql ?? '',
+      body.question ??
+        null,
     );
   }
 
@@ -221,7 +246,69 @@ export class QueryController {
     );
   }
 
-  @Get('query-history')
+  @Post(
+    'datasets/:datasetId/query/export',
+  )
+  async exportQueryResult(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('datasetId')
+    datasetId: string,
+
+    @Body()
+    body: ExecuteSqlBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ): Promise<StreamableFile> {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const result =
+      await this.queryService.executeSql(
+        datasetId,
+        workspaceId,
+        userId,
+        body.sql ?? '',
+      );
+
+    const csv =
+      this.resultExportService.toCsv(
+        result,
+      );
+
+    return new StreamableFile(
+      csv,
+      {
+        type:
+          'text/csv; charset=utf-8',
+
+        disposition:
+          'attachment; filename="query-result.csv"',
+
+        length:
+          csv.length,
+      },
+    );
+  }
+
+  @Get(
+    'query-history',
+  )
   async listQueryHistory(
     @Param('workspaceId')
     workspaceId: string,
@@ -260,7 +347,9 @@ export class QueryController {
       workspaceId,
       userId,
       datasetId,
-      Number.isFinite(parsedLimit)
+      Number.isFinite(
+        parsedLimit,
+      )
         ? parsedLimit
         : 50,
     );

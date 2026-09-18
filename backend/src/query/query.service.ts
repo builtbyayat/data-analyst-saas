@@ -22,28 +22,65 @@ import { StorageService } from '../storage/storage.service.js';
 
 import { DuckDBService } from './duckdb.service.js';
 import { QueryHistory } from './query-history.entity.js';
+import { ResultSummaryService } from './result-summary.service.js';
+import {
+  ResultVisualization,
+  ResultVisualizationService,
+} from './result-visualization.service.js';
+import {
+  SqlExplanationResult,
+  SqlExplanationService,
+} from './sql-explanation.service.js';
 import { SqlGenerationService } from './sql-generation.service.js';
 import { SqlValidatorService } from './sql-validator.service.js';
 
 export interface DatasetQueryResult {
+  sql: string;
+
   columns: string[];
+
   rows: unknown[][];
+
   rowCount: number;
+
   truncated: boolean;
+
   executionTimeMs: number;
+
+  summary: {
+    totalRows: number;
+    numericColumns: Array<{
+      column: string;
+      sum: number;
+      average: number;
+      min: number;
+      max: number;
+    }>;
+  };
+
+  visualization: ResultVisualization;
+
+  explanation:
+    | SqlExplanationResult
+    | null;
 }
 
 export interface NaturalLanguageQueryResult {
   question: string;
+
   sql: string;
+
   provider: string;
+
   model: string | null;
+
   result: DatasetQueryResult;
 }
 
 @Injectable()
 export class QueryService {
-  private readonly maxResultRows = 5000;
+  private readonly maxResultRows =
+    5000;
 
   constructor(
     @InjectRepository(Dataset)
@@ -59,6 +96,12 @@ export class QueryService {
     private readonly sqlValidatorService: SqlValidatorService,
 
     private readonly sqlGenerationService: SqlGenerationService,
+
+    private readonly resultSummaryService: ResultSummaryService,
+
+    private readonly resultVisualizationService: ResultVisualizationService,
+
+    private readonly sqlExplanationService: SqlExplanationService,
   ) {}
 
   private async getDataset(
@@ -69,6 +112,7 @@ export class QueryService {
       await this.datasetRepository.findOne({
         where: {
           id: datasetId,
+
           workspaceId,
         },
       });
@@ -91,7 +135,9 @@ export class QueryService {
   private normalizeQueryError(
     error: unknown,
   ): HttpException {
-    if (error instanceof HttpException) {
+    if (
+      error instanceof HttpException
+    ) {
       return error;
     }
 
@@ -116,6 +162,7 @@ export class QueryService {
   private async executeAgainstDataset(
     dataset: Dataset,
     sql: string,
+    question?: string | null,
   ): Promise<DatasetQueryResult> {
     const startedAt =
       Date.now();
@@ -163,14 +210,51 @@ export class QueryService {
         result.rows.length >
         this.maxResultRows;
 
-      const rows = truncated
-        ? result.rows.slice(
-            0,
-            this.maxResultRows,
-          )
-        : result.rows;
+      const rows =
+        truncated
+          ? result.rows.slice(
+              0,
+              this.maxResultRows,
+            )
+          : result.rows;
+
+      const summary =
+        this.resultSummaryService.summarize(
+          result.columns,
+          rows,
+        );
+
+      const visualization =
+        this.resultVisualizationService.analyze(
+          result.columns,
+          rows,
+          question,
+        );
+
+      const explanation =
+        question?.trim()
+          ? await this.sqlExplanationService.explain(
+              {
+                sql,
+
+                question,
+
+                columns:
+                  result.columns,
+
+                rowCount:
+                  rows.length,
+
+                truncated,
+
+                summary,
+              },
+            )
+          : null;
 
       return {
+        sql,
+
         columns:
           result.columns,
 
@@ -182,7 +266,14 @@ export class QueryService {
         truncated,
 
         executionTimeMs:
-          Date.now() - startedAt,
+          Date.now() -
+          startedAt,
+
+        summary,
+
+        visualization,
+
+        explanation,
       };
     } finally {
       await rm(
@@ -216,13 +307,15 @@ export class QueryService {
           ),
         );
 
+      const previewSql = `
+        SELECT *
+        FROM dataset
+        LIMIT ${safeLimit}
+      `;
+
       return await this.executeAgainstDataset(
         dataset,
-        `
-          SELECT *
-          FROM dataset
-          LIMIT ${safeLimit}
-        `,
+        previewSql,
       );
     } catch (error) {
       throw this.normalizeQueryError(
@@ -236,6 +329,7 @@ export class QueryService {
     workspaceId: string,
     userId: string,
     sql: string,
+    question?: string | null,
   ): Promise<DatasetQueryResult> {
     const startedAt =
       Date.now();
@@ -257,45 +351,70 @@ export class QueryService {
           sql,
         );
 
-      failureType = 'execution';
+      failureType =
+        'execution';
 
       const result =
         await this.executeAgainstDataset(
           dataset,
           validatedSql,
+          question,
         );
 
       await this.queryHistoryRepository.save(
         this.queryHistoryRepository.create({
           workspaceId,
+
           datasetId,
+
           userId,
-          sql: validatedSql,
+
+          sql:
+            validatedSql,
+
           rowCount:
             result.rowCount,
+
           executionTimeMs:
             result.executionTimeMs,
-          status: 'success',
-          failureType: null,
-          errorMessage: null,
+
+          status:
+            'success',
+
+          failureType:
+            null,
+
+          errorMessage:
+            null,
         }),
       );
 
       return result;
     } catch (error) {
       const executionTimeMs =
-        Date.now() - startedAt;
+        Date.now() -
+        startedAt;
 
       await this.queryHistoryRepository.save(
         this.queryHistoryRepository.create({
           workspaceId,
+
           datasetId,
+
           userId,
+
           sql,
-          rowCount: null,
+
+          rowCount:
+            null,
+
           executionTimeMs,
-          status: 'failed',
+
+          status:
+            'failed',
+
           failureType,
+
           errorMessage:
             this.getErrorMessage(
               error,
@@ -328,6 +447,7 @@ export class QueryService {
         workspaceId,
         userId,
         generation.sql,
+        generation.question,
       );
 
     return {
