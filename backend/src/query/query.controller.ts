@@ -37,6 +37,10 @@ interface GenerateSqlBody {
   question?: string;
 }
 
+interface NaturalLanguageQueryBody {
+  question?: string;
+}
+
 @Controller(
   'workspaces/:workspaceId',
 )
@@ -174,6 +178,46 @@ export class QueryController {
       workspaceId,
       userId,
       body.sql ?? '',
+    );
+  }
+
+  @Post(
+    'datasets/:datasetId/query-from-question',
+  )
+  async executeNaturalLanguageQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('datasetId')
+    datasetId: string,
+
+    @Body()
+    body: NaturalLanguageQueryBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.queryService.executeNaturalLanguageQuery(
+      datasetId,
+      workspaceId,
+      userId,
+      body.question ?? '',
     );
   }
 

@@ -3,7 +3,9 @@ import {
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
+
 import { GoogleGenAI } from '@google/genai';
+
 import type {
   AiProvider,
   AiTextGenerationRequest,
@@ -12,18 +14,26 @@ import type {
 
 @Injectable()
 export class GeminiProvider implements AiProvider {
-  private readonly logger = new Logger(GeminiProvider.name);
-  private readonly client: GoogleGenAI | null;
+  private readonly logger =
+    new Logger(GeminiProvider.name);
+
+  private readonly client:
+    GoogleGenAI | null;
+
   private readonly model: string;
 
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const apiKey =
+      process.env.GEMINI_API_KEY?.trim();
 
     this.model =
-      process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash';
+      process.env.GEMINI_MODEL?.trim() ||
+      'gemini-3.8-flash';
 
     this.client = apiKey
-      ? new GoogleGenAI({ apiKey })
+      ? new GoogleGenAI({
+          apiKey,
+        })
       : null;
   }
 
@@ -37,16 +47,44 @@ export class GeminiProvider implements AiProvider {
     }
 
     try {
-      const response = await this.client.models.generateContent({
-        model: this.model,
-        contents: request.userPrompt,
-        config: {
-          systemInstruction: request.systemPrompt,
-          maxOutputTokens: request.maxOutputTokens ?? 2000,
-        },
-      });
+      const response =
+        await this.client.models.generateContent({
+          model: this.model,
 
-      const text = response.text?.trim() ?? '';
+          contents:
+            request.userPrompt,
+
+          config: {
+            systemInstruction:
+              request.systemPrompt,
+
+            maxOutputTokens:
+              request.maxOutputTokens ?? 2000,
+
+            httpOptions: {
+              timeout: 15000,
+
+              retryOptions: {
+                attempts: 2,
+                initialDelay: 0.5,
+                expBase: 2,
+                maxDelay: 2,
+                jitter: 0.2,
+                httpStatusCodes: [
+                  408,
+                  429,
+                  500,
+                  502,
+                  503,
+                  504,
+                ],
+              },
+            },
+          },
+        });
+
+      const text =
+        response.text?.trim() ?? '';
 
       if (!text) {
         throw new ServiceUnavailableException(
@@ -56,20 +94,35 @@ export class GeminiProvider implements AiProvider {
 
       return {
         text,
-        provider: 'gemini',
-        model: this.model,
+
+        provider:
+          'gemini',
+
+        model:
+          this.model,
+
         inputTokens:
-          response.usageMetadata?.promptTokenCount ?? null,
+          response.usageMetadata
+            ?.promptTokenCount ??
+          null,
+
         outputTokens:
-          response.usageMetadata?.candidatesTokenCount ?? null,
+          response.usageMetadata
+            ?.candidatesTokenCount ??
+          null,
       };
     } catch (error) {
       this.logger.error(
         'Gemini request failed',
-        error instanceof Error ? error.stack : String(error),
+        error instanceof Error
+          ? error.stack
+          : String(error),
       );
 
-      if (error instanceof ServiceUnavailableException) {
+      if (
+        error instanceof
+        ServiceUnavailableException
+      ) {
         throw error;
       }
 

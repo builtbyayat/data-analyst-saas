@@ -176,6 +176,54 @@ describe('SqlGenerationService', () => {
     });
   });
 
+  it('should normalize SQL returned inside a Markdown code fence', async () => {
+    aiServiceMock.generateText.mockResolvedValue(
+      {
+        text:
+          '```sql\nSELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city\n```',
+        provider: 'test-provider',
+        model: 'test-model',
+        inputTokens: null,
+        outputTokens: null,
+      },
+    );
+
+    const result =
+      await sqlGenerationService.generateSql(
+        'dataset-1',
+        'workspace-1',
+        'Show total sales by city',
+      );
+
+    expect(result.sql).toBe(
+      'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
+    );
+  });
+
+  it('should normalize an SQL prefix returned by the AI provider', async () => {
+    aiServiceMock.generateText.mockResolvedValue(
+      {
+        text:
+          'SQL: SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
+        provider: 'test-provider',
+        model: 'test-model',
+        inputTokens: null,
+        outputTokens: null,
+      },
+    );
+
+    const result =
+      await sqlGenerationService.generateSql(
+        'dataset-1',
+        'workspace-1',
+        'Show total sales by city',
+      );
+
+    expect(result.sql).toBe(
+      'SELECT city, SUM(sales) AS total_sales FROM dataset GROUP BY city',
+    );
+  });
+
   it('should reject an empty natural-language question', async () => {
     await expect(
       sqlGenerationService.generateSql(

@@ -22,6 +22,7 @@ import { StorageService } from '../storage/storage.service.js';
 
 import { DuckDBService } from './duckdb.service.js';
 import { QueryHistory } from './query-history.entity.js';
+import { SqlGenerationService } from './sql-generation.service.js';
 import { SqlValidatorService } from './sql-validator.service.js';
 
 export interface DatasetQueryResult {
@@ -30,6 +31,14 @@ export interface DatasetQueryResult {
   rowCount: number;
   truncated: boolean;
   executionTimeMs: number;
+}
+
+export interface NaturalLanguageQueryResult {
+  question: string;
+  sql: string;
+  provider: string;
+  model: string | null;
+  result: DatasetQueryResult;
 }
 
 @Injectable()
@@ -48,6 +57,8 @@ export class QueryService {
     private readonly duckDbService: DuckDBService,
 
     private readonly sqlValidatorService: SqlValidatorService,
+
+    private readonly sqlGenerationService: SqlGenerationService,
   ) {}
 
   private async getDataset(
@@ -232,7 +243,7 @@ export class QueryService {
     let failureType:
       | 'validation'
       | 'execution'
-      | null = null;
+      | null = 'validation';
 
     try {
       const dataset =
@@ -240,8 +251,6 @@ export class QueryService {
           datasetId,
           workspaceId,
         );
-
-      failureType = 'validation';
 
       const validatedSql =
         this.sqlValidatorService.validate(
@@ -298,5 +307,43 @@ export class QueryService {
         error,
       );
     }
+  }
+
+  async executeNaturalLanguageQuery(
+    datasetId: string,
+    workspaceId: string,
+    userId: string,
+    question: string,
+  ): Promise<NaturalLanguageQueryResult> {
+    const generation =
+      await this.sqlGenerationService.generateSql(
+        datasetId,
+        workspaceId,
+        question,
+      );
+
+    const result =
+      await this.executeSql(
+        datasetId,
+        workspaceId,
+        userId,
+        generation.sql,
+      );
+
+    return {
+      question:
+        generation.question,
+
+      sql:
+        generation.sql,
+
+      provider:
+        generation.provider,
+
+      model:
+        generation.model,
+
+      result,
+    };
   }
 }

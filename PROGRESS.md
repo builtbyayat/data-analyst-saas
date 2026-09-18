@@ -3437,3 +3437,223 @@ Chart generation
 SQL explanation
    ↓
 Result export
+
+
+## 39 — Natural Language → SQL → Execute
+
+### Status
+COMPLETE ✅
+
+### Implemented
+
+Added end-to-end natural-language query execution.
+
+New endpoint:
+
+```text
+POST /workspaces/:workspaceId/datasets/:datasetId/query-from-question
+
+Flow:
+
+Natural Language Question
+        ↓
+Schema-aware Dataset Context
+        ↓
+Gemini SQL Generation
+        ↓
+SQL Validation
+        ↓
+DuckDB Execution
+        ↓
+Query Result
+        ↓
+Query History
+
+The generated SQL is passed through the existing executeSql() path so SQL validation and query-history tracking are preserved.
+
+Verification
+
+Test question:
+
+Show avarage sales by city
+
+Generated SQL:
+
+SELECT city, AVG(sales) AS average_sales
+FROM dataset
+GROUP BY city
+
+Returned results successfully:
+
+Lucknow → 1800
+Kanpur  → 1200
+Delhi   → 2400
+
+The existing query-history API also recorded the successful execution.
+
+40 — Query Failure Classification Hardening
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Query execution failures now default to:
+
+failureType = validation
+
+before SQL execution begins.
+
+This ensures failures such as a missing queryable dataset object are classified correctly.
+
+Verification
+
+A dataset without a queryable Parquet object returned:
+
+HTTP 400
+
+and query history recorded:
+
+status = failed
+failureType = validation
+41 — AI-Generated SQL Robustness
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added normalization for common AI response formatting:
+
+Markdown SQL code fences
+SQL: prefix
+
+Flow:
+
+Gemini Response
+      ↓
+SQL Normalization
+      ↓
+SQL Validator
+      ↓
+Validated SQL
+
+Safety validation remains active after normalization.
+
+Verification
+
+Added tests for:
+
+plain SQL
+Markdown code-fenced SQL
+SQL: prefixed SQL
+empty questions
+oversized questions
+dangerous AI-generated SQL
+
+Result:
+
+6 SQL generation tests passed
+42 — Query Service Reliability Tests
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added:
+
+backend/src/query/query.service.spec.ts
+
+Coverage includes:
+
+successful SQL execution
+empty result sets
+maximum result-row truncation
+execution failure handling
+validation failure classification
+natural-language query execution flow
+
+Maximum returned rows remain limited to:
+
+5000
+Verification
+
+Result:
+
+6 QueryService tests passed
+43 — Full Backend Regression
+Status
+
+COMPLETE ✅
+
+Verification
+
+Executed:
+
+npm test
+
+Result:
+
+4 test files passed
+15 tests passed
+0 failed
+
+Executed:
+
+npm run build
+
+Result:
+
+Build successful
+Current Automated Test Coverage
+AppController tests
+AI service tests
+SQL generation tests
+Query service tests
+
+All currently pass successfully.
+
+Current Backend Product Flow
+Authentication
+      ↓
+Workspace Authorization
+      ↓
+Dataset Upload / Ingestion
+      ↓
+Dataset Profiling
+      ↓
+Queryable Parquet
+      ↓
+Schema-aware Context
+      ↓
+Natural Language Question
+      ↓
+Gemini SQL Generation
+      ↓
+SQL Normalization
+      ↓
+SQL Validation
+      ↓
+DuckDB Execution
+      ↓
+Result Limiting
+      ↓
+Query History
+Next Development Focus
+
+Continue Phase 2.3 toward the product result layer:
+
+Query Results
+      ↓
+Result Table API / Contract
+      ↓
+KPI Summaries
+      ↓
+Chart Generation
+      ↓
+Chart Type Selection
+      ↓
+SQL Explanation
+      ↓
+Result Export

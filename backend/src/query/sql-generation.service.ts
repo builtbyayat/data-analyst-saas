@@ -71,7 +71,9 @@ export class SqlGenerationService {
       });
 
     const generatedSql =
-      generated.text.trim();
+      this.normalizeGeneratedSql(
+        generated.text,
+      );
 
     if (!generatedSql) {
       throw new BadRequestException(
@@ -99,6 +101,42 @@ export class SqlGenerationService {
     };
   }
 
+  private normalizeGeneratedSql(
+    value: string,
+  ): string {
+    let sql =
+      value.trim();
+
+    if (!sql) {
+      return '';
+    }
+
+    if (
+      sql.startsWith('\uFEFF')
+    ) {
+      sql =
+        sql.slice(1).trim();
+    }
+
+    const fencedMatch =
+      sql.match(
+        /^```(?:sql)?\s*([\s\S]*?)\s*```$/i,
+      );
+
+    if (fencedMatch) {
+      sql =
+        fencedMatch[1].trim();
+    }
+
+    sql =
+      sql.replace(
+        /^SQL\s*:\s*/i,
+        '',
+      ).trim();
+
+    return sql;
+  }
+
   private buildSystemPrompt(): string {
     return `
 You are a SQL generation engine for an AI Data Analyst.
@@ -110,6 +148,7 @@ Rules:
 - Return SQL only.
 - Do not return Markdown.
 - Do not use code fences.
+- Do not prefix the response with "SQL:".
 - Use only the columns provided in the dataset schema.
 - The dataset is available as the table named "dataset".
 - Generate only SELECT or WITH queries.
