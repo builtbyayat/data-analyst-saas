@@ -77,7 +77,10 @@ export class DatasetsController {
 
     const datasetName =
       name?.trim() ||
-      file.originalname.replace(/\.[^/.]+$/, '');
+      file.originalname.replace(
+        /\.[^/.]+$/,
+        '',
+      );
 
     const objectKey =
       `workspaces/${workspaceId}/datasets/${randomUUID()}-${file.originalname}`;
@@ -142,6 +145,23 @@ export class DatasetsController {
     );
 
     return this.datasetsService.listByWorkspace(
+      workspaceId,
+    );
+  }
+
+  @Get(':datasetId/context')
+  async getContext(
+    @Request() request: { user: { id: string } },
+    @Param('workspaceId') workspaceId: string,
+    @Param('datasetId') datasetId: string,
+  ) {
+    await this.workspaceAccessService.requireMembership(
+      request.user.id,
+      workspaceId,
+    );
+
+    return this.datasetsService.getAnalysisContext(
+      datasetId,
       workspaceId,
     );
   }

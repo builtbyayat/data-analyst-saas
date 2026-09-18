@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import {
+  ConfigModule,
+  ConfigService,
+} from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BullModule } from '@nestjs/bullmq';
 
@@ -9,6 +12,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module.js';
 import { DatasetsModule } from './datasets/datasets.module.js';
 import { StorageModule } from './storage/storage.module.js';
 import { QueryModule } from './query/query.module.js';
+import { AiModule } from './ai/ai.module.js';
 
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -22,18 +26,25 @@ import { AppService } from './app.service.js';
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
 
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (
+        configService: ConfigService,
+      ) => ({
         type: 'postgres',
 
-        host: configService.get<string>('DATABASE_HOST'),
+        host: configService.get<string>(
+          'DATABASE_HOST',
+        ),
 
         port: Number(
-          configService.get<string>('DATABASE_PORT'),
+          configService.get<string>(
+            'DATABASE_PORT',
+          ),
         ),
 
-        username: configService.get<string>(
-          'DATABASE_USER',
-        ),
+        username:
+          configService.get<string>(
+            'DATABASE_USER',
+          ),
 
         password: String(
           configService.get<string>(
@@ -41,9 +52,10 @@ import { AppService } from './app.service.js';
           ) ?? '',
         ),
 
-        database: configService.get<string>(
-          'DATABASE_NAME',
-        ),
+        database:
+          configService.get<string>(
+            'DATABASE_NAME',
+          ),
 
         autoLoadEntities: true,
 
@@ -56,12 +68,15 @@ import { AppService } from './app.service.js';
 
       inject: [ConfigService],
 
-      useFactory: (configService: ConfigService) => ({
+      useFactory: (
+        configService: ConfigService,
+      ) => ({
         connection: {
-          host: configService.get<string>(
-            'REDIS_HOST',
-            'localhost',
-          ),
+          host:
+            configService.get<string>(
+              'REDIS_HOST',
+              'localhost',
+            ),
 
           port: Number(
             configService.get<string>(
@@ -93,10 +108,16 @@ import { AppService } from './app.service.js';
     StorageModule,
 
     QueryModule,
+
+    AiModule,
   ],
 
-  controllers: [AppController],
+  controllers: [
+    AppController,
+  ],
 
-  providers: [AppService],
+  providers: [
+    AppService,
+  ],
 })
 export class AppModule {}

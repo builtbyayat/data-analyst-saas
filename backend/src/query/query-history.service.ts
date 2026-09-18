@@ -17,6 +17,7 @@ export interface QueryHistoryListItem {
   rowCount: number | null;
   executionTimeMs: number | null;
   status: 'success' | 'failed';
+  failureType: 'validation' | 'execution' | null;
   errorMessage: string | null;
   createdAt: Date;
 }
@@ -81,6 +82,9 @@ export class QueryHistoryService {
 
         status:
           item.status,
+
+        failureType:
+          item.failureType,
 
         errorMessage:
           item.errorMessage,

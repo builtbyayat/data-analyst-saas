@@ -28,52 +28,31 @@ export class QueryHistory {
   @Column({ type: 'text' })
   sql!: string;
 
-  @Column({
-    type: 'integer',
-    nullable: true,
-  })
+  @Column({ type: 'integer', nullable: true })
   rowCount!: number | null;
 
-  @Column({
-    type: 'integer',
-    nullable: true,
-  })
+  @Column({ type: 'integer', nullable: true })
   executionTimeMs!: number | null;
 
-  @Column({
-    type: 'varchar',
-    default: 'success',
-  })
+  @Column({ type: 'varchar', default: 'success' })
   status!: 'success' | 'failed';
 
-  @Column({
-    type: 'text',
-    nullable: true,
-  })
+  @Column({ type: 'varchar', nullable: true })
+  failureType!: 'validation' | 'execution' | null;
+
+  @Column({ type: 'text', nullable: true })
   errorMessage!: string | null;
 
-  @ManyToOne('Workspace', {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({
-    name: 'workspaceId',
-  })
+  @ManyToOne('Workspace', { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'workspaceId' })
   workspace!: Workspace;
 
-  @ManyToOne('Dataset', {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({
-    name: 'datasetId',
-  })
+  @ManyToOne('Dataset', { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'datasetId' })
   dataset!: Dataset;
 
-  @ManyToOne('User', {
-    onDelete: 'CASCADE',
-  })
-  @JoinColumn({
-    name: 'userId',
-  })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'userId' })
   user!: User;
 
   @CreateDateColumn()

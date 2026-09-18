@@ -1,14 +1,44 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+
 import { InjectQueue } from '@nestjs/bullmq';
 import { InjectRepository } from '@nestjs/typeorm';
+
 import { Queue } from 'bullmq';
 import { Repository } from 'typeorm';
 
 import { Dataset } from './dataset.entity.js';
+
 import { StorageService } from '../storage/storage.service.js';
+
+export interface DatasetAnalysisContext {
+  dataset: {
+    id: string;
+    name: string;
+    originalFilename: string;
+    fileType: string;
+    fileSize: string;
+    rowCount: number;
+    columnCount: number;
+    status:
+      | 'pending'
+      | 'processing'
+      | 'ready'
+      | 'failed';
+  };
+
+  columns: Array<{
+    name: string;
+    dataType: string;
+    ordinalPosition: number;
+    nullable: boolean;
+    nullCount: number;
+    distinctCount: number;
+  }>;
+}
 
 @Injectable()
 export class DatasetsService {
@@ -44,6 +74,63 @@ export class DatasetsService {
     }
 
     return dataset;
+  }
+
+  async getAnalysisContext(
+    datasetId: string,
+    workspaceId: string,
+  ): Promise<DatasetAnalysisContext> {
+    const dataset =
+      await this.findById(
+        datasetId,
+        workspaceId,
+      );
+
+    if (dataset.status !== 'ready') {
+      throw new BadRequestException(
+        `Dataset is not ready for analysis. Current status: ${dataset.status}`,
+      );
+    }
+
+    if (!dataset.queryObjectKey) {
+      throw new BadRequestException(
+        'Dataset does not have a queryable Parquet object',
+      );
+    }
+
+    return {
+      dataset: {
+        id: dataset.id,
+        name: dataset.name,
+        originalFilename:
+          dataset.originalFilename,
+        fileType: dataset.fileType,
+        fileSize: dataset.fileSize,
+        rowCount: dataset.rowCount,
+        columnCount: dataset.columnCount,
+        status: dataset.status,
+      },
+
+      columns: [...dataset.columns]
+        .sort(
+          (a, b) =>
+            a.ordinalPosition -
+            b.ordinalPosition,
+        )
+        .map(
+          (column) => ({
+            name: column.name,
+            dataType: column.dataType,
+            ordinalPosition:
+              column.ordinalPosition,
+            nullable: column.nullable,
+            nullCount:
+              column.nullCount,
+            distinctCount:
+              column.distinctCount,
+          }),
+        ),
+    };
   }
 
   async listByWorkspace(
@@ -118,6 +205,12 @@ export class DatasetsService {
     await this.storageService.delete(
       dataset.objectKey,
     );
+
+    if (dataset.queryObjectKey) {
+      await this.storageService.delete(
+        dataset.queryObjectKey,
+      );
+    }
 
     await this.datasetRepository.remove(
       dataset,

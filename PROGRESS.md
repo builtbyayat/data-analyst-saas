@@ -2767,3 +2767,673 @@ IN PROGRESS
 Current development focus:
 
 Query Execution Architecture
+
+
+---
+
+## 24.39 — DuckDB Query Execution Foundation
+
+### Status
+COMPLETE ✅
+
+### Implemented
+- Added `QueryModule`
+- Added `DuckDBService`
+- Integrated DuckDB with NestJS
+- Verified real DuckDB execution using `SELECT 1`
+- Confirmed clean NestJS startup after DuckDB integration
+
+### Result
+DuckDB is now available as a reusable query-engine dependency inside the backend.
+
+---
+
+## 24.40 — Queryable Dataset Representation
+
+### Status
+COMPLETE ✅
+
+### Implemented
+- Added `queryObjectKey` to `Dataset`
+- Added migration:
+  - `1789578500000-AddDatasetQueryObjectKey`
+- Preserved original uploaded file in object storage
+- Added Parquet generation during dataset ingestion
+- Generated Parquet files using DuckDB
+- Uploaded generated Parquet files to MinIO
+- Saved the generated Parquet object key in PostgreSQL
+
+### Dataset Query Architecture
+
+```text
+Original CSV/XLSX
+       ↓
+MinIO
+       ↓
+Dataset Ingestion Worker
+       ↓
+Parse + Profile
+       ↓
+DuckDB Parquet Generation
+       ↓
+MinIO query.parquet
+       ↓
+datasets.queryObjectKey
+
+Verification
+
+A real CSV dataset was processed successfully:
+
+Rows: 3
+Columns: 4
+Parquet generated successfully
+Parquet uploaded successfully
+Dataset status changed to ready
+queryObjectKey populated successfully
+24.41 — Parquet → DuckDB Dataset Preview
+Status
+
+COMPLETE ✅
+
+Implemented
+Added QueryService
+Added dataset Parquet download through StorageService
+Added temporary Parquet file handling
+Added DuckDB read_parquet() execution
+Added dataset preview endpoint
+Added result normalization
+Added column metadata to query results
+Added row count
+Added execution time
+Endpoint
+GET /workspaces/:workspaceId/datasets/:datasetId/preview
+Response Contract
+{
+  "columns": ["name", "age", "city", "sales"],
+  "rows": [
+    ["Ali", "25", "Kanpur", "1200"],
+    ["Sara", "31", "Lucknow", "1800"],
+    ["Ahmed", "28", "Delhi", "2400"]
+  ],
+  "rowCount": 3,
+  "executionTimeMs": 50
+}
+Verification
+
+Real Parquet data was successfully queried through DuckDB and returned through the API with HTTP 200 OK.
+
+24.42 — SQL Safety / Read-Only Validation
+Status
+
+COMPLETE ✅
+
+Implemented
+Added SqlValidatorService
+Added SQL validation before DuckDB execution
+Allowed only SELECT and WITH queries
+Blocked multiple SQL statements
+Blocked SQL comments
+Blocked write/destructive operations
+Blocked filesystem and external data-access functions
+Blocked Operations Include
+CREATE
+DELETE
+DROP
+INSERT
+UPDATE
+COPY
+ATTACH
+DETACH
+INSTALL
+LOAD
+PRAGMA
+TRUNCATE
+VACUUM
+Verification
+
+A valid query executed successfully.
+
+A dangerous query:
+
+DROP TABLE dataset
+
+was rejected with:
+
+HTTP 400 Bad Request
+Only SELECT and WITH queries are allowed
+24.43 — Normalized Query Result Contract
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Query results now return:
+
+{
+  "columns": [],
+  "rows": [],
+  "rowCount": 0,
+  "executionTimeMs": 0
+}
+Additional Handling
+DuckDB BigInt values are converted to JSON-safe strings
+Date values are normalized
+Nested/array result values are normalized where required
+
+This prevents JSON serialization failures such as:
+
+TypeError: Do not know how to serialize a BigInt
+24.44 — Query History Data Model
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added QueryHistory entity with:
+
+id
+workspaceId
+datasetId
+userId
+sql
+rowCount
+executionTimeMs
+status
+errorMessage
+createdAt
+Migration
+1789579000000-AddQueryHistory
+Database Relationships
+Workspace
+   ↓
+QueryHistory
+
+Dataset
+   ↓
+QueryHistory
+
+User
+   ↓
+QueryHistory
+Indexes
+
+Added indexes for:
+
+workspaceId + createdAt
+datasetId + createdAt
+userId + createdAt
+24.45 — Query Execution + History Tracking
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Successful and failed SQL executions are now recorded in query_history.
+
+Success Flow
+SQL
+ ↓
+Validation
+ ↓
+DuckDB execution
+ ↓
+Result
+ ↓
+query_history
+status = success
+Failure Flow
+SQL
+ ↓
+Validation / execution failure
+ ↓
+query_history
+status = failed
+errorMessage saved
+Verification
+
+Successful query:
+
+SELECT city, SUM(sales) AS total_sales
+FROM dataset
+GROUP BY city
+ORDER BY total_sales DESC
+
+Recorded as:
+
+status = success
+rowCount = 3
+
+Blocked query:
+
+DROP TABLE dataset
+
+Recorded as:
+
+status = failed
+errorMessage = Only SELECT and WITH queries are allowed
+24.46 — Query History API
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added QueryHistoryService.
+
+Added endpoint:
+
+GET /workspaces/:workspaceId/query-history
+Supported Filters
+datasetId
+limit
+Security
+JWT authentication required
+Workspace membership required
+History is scoped to the authenticated user
+Users cannot retrieve another user's query history through this endpoint
+Verification
+
+The API successfully returned:
+
+successful query history
+failed query history
+SQL text
+dataset ID
+row count
+execution time
+status
+error message
+creation timestamp
+24.47 — Git Checkpoint: Query Engine Milestone
+Status
+
+COMPLETE ✅
+
+Commit
+feat: add query history API
+GitHub
+
+The latest Query Engine milestone has been pushed to:
+
+origin/main
+Current Repository State
+working tree clean ✅
+local main synced ✅
+origin/main synced ✅
+Current Architecture Status
+
+The backend now supports:
+
+Authentication
+     ↓
+Workspace Authorization
+     ↓
+Dataset Upload
+     ↓
+MinIO Original File
+     ↓
+BullMQ Ingestion
+     ↓
+CSV/XLSX Parsing
+     ↓
+Dataset Profiling
+     ↓
+Parquet Generation
+     ↓
+MinIO Query Object
+     ↓
+DuckDB
+     ↓
+SQL Validation
+     ↓
+Read-Only Query Execution
+     ↓
+Normalized Results
+     ↓
+Query History
+     ↓
+Query History API
+Next Development Focus
+Step 34 — Query Execution Hardening
+
+Planned next work:
+
+SQL parser / stronger validation
+Query timeout
+Resource limits
+Result size limits
+Query complexity protection
+Safer dataset isolation
+Execution failure handling
+
+After query hardening, continue toward:
+
+Schema-aware query context
+NL → SQL
+AI provider abstraction
+AI-generated SQL validation
+Result explanation
+Visualization
+
+
+## 34 — Query Execution Hardening
+
+### Status
+COMPLETE ✅
+
+### Implemented
+
+- Added SQL execution timeout protection
+- Added maximum result-row protection
+- Added query complexity limits
+- Added SQL length limit
+- Added JOIN limit
+- Added UNION limit
+- Added subquery limit
+- Added stronger blocked-keyword validation
+- Added blocked filesystem / external data-access function validation
+- Added dataset readiness and queryability checks before analytical execution
+- Added controlled DuckDB query execution through temporary Parquet files
+
+### Result
+
+The query engine now has explicit resource and safety boundaries before executing analytical SQL.
+
+---
+
+## 35 — Query Failure Tracking & History Hardening
+
+### Status
+COMPLETE ✅
+
+### Implemented
+
+Extended `QueryHistory` with:
+
+```text
+failureType
+
+Supported values:
+
+validation
+execution
+null
+
+Added migration:
+
+backend/src/migrations/1789579100000-AddQueryHistoryFailureType.ts
+Failure Classification
+
+Validation failures are recorded separately from DuckDB execution failures.
+
+Examples:
+
+Validation failure
+    ↓
+failureType = validation
+DuckDB execution failure
+    ↓
+failureType = execution
+
+Successful queries:
+
+failureType = null
+Verification
+
+Successfully verified:
+
+valid query
+blocked SQL
+invalid SQL referencing a non-existent column
+query history failure classification
+query-history API exposure of failureType
+36 — Dataset Analysis Context
+Status
+
+COMPLETE ✅
+
+Implemented
+
+Added schema-aware dataset analysis context generation.
+
+The context includes:
+
+Dataset metadata
+Column metadata
+Data types
+Ordinal positions
+Nullable state
+Null counts
+Distinct counts
+
+Added endpoint:
+
+GET /workspaces/:workspaceId/datasets/:datasetId/context
+Security
+
+The endpoint requires:
+
+JWT authentication
+Workspace membership
+Validation
+
+The context endpoint rejects datasets that are:
+
+not ready
+
+or:
+
+missing queryObjectKey
+Verification
+
+The ready CSV dataset successfully returned:
+
+name     string
+age      integer
+city     string
+sales    integer
+
+with profiling metadata.
+
+37 — AI Abstraction & Natural-Language SQL Generation
+Status
+
+COMPLETE ✅
+
+AI Architecture
+
+Created provider-neutral AI abstraction:
+
+AiProvider
+     ↓
+AiService
+     ↓
+AI_PROVIDER
+
+Created:
+
+backend/src/ai/ai-provider.interface.ts
+backend/src/ai/ai.constants.ts
+backend/src/ai/ai.service.ts
+backend/src/ai/ai.module.ts
+
+Added unavailable-provider fallback for development/testing.
+
+SQL Generation
+
+Created:
+
+backend/src/query/sql-generation.service.ts
+
+The service:
+
+Natural-language question
+        ↓
+Dataset analysis context
+        ↓
+AI provider
+        ↓
+Generated SQL
+        ↓
+SQL validator
+        ↓
+Validated SQL
+Endpoint
+POST /workspaces/:workspaceId/datasets/:datasetId/generate-sql
+
+Request:
+
+{
+  "question": "Show total sales by city"
+}
+Safety
+
+Generated SQL is validated before being returned.
+
+The generation prompt restricts the AI to:
+
+SELECT / WITH
+dataset table
+supplied columns only
+read-only analytical SQL
+no filesystem access
+no external database access
+Tests
+
+Added SQL generation unit tests covering:
+
+successful SQL generation
+empty question rejection
+question length limit
+dangerous AI-generated SQL rejection
+38 — Gemini AI Provider Integration
+Status
+
+COMPLETE ✅
+
+Gemini SDK
+
+Installed:
+
+@google/genai
+Gemini Provider
+
+Created:
+
+backend/src/ai/gemini.provider.ts
+
+The provider:
+
+implements AiProvider
+reads GEMINI_API_KEY
+reads GEMINI_MODEL
+calls Gemini text generation
+returns normalized AI response data
+captures usage metadata where available
+logs provider errors server-side
+converts provider failures into application-level service errors
+Provider Wiring
+
+Current provider:
+
+AI_PROVIDER
+     ↓
+GeminiProvider
+
+The rest of the application remains provider-agnostic.
+
+Environment
+
+Configured:
+
+GEMINI_API_KEY
+GEMINI_MODEL
+
+Secrets remain inside:
+
+backend/.env
+
+and .env remains protected from Git.
+
+Verification
+
+The authenticated SQL-generation endpoint was successfully tested using the ready CSV dataset.
+
+Question:
+
+Show total sales by city
+
+Generated SQL:
+
+SELECT city, SUM(sales) AS total_sales
+FROM dataset
+GROUP BY city
+
+Provider:
+
+gemini
+
+Model:
+
+gemini-3.8-flash
+End-to-End AI Flow
+Authenticated Request
+        ↓
+Workspace Authorization
+        ↓
+Dataset Analysis Context
+        ↓
+SqlGenerationService
+        ↓
+AiService
+        ↓
+GeminiProvider
+        ↓
+Gemini API
+        ↓
+Generated SQL
+        ↓
+SQL Validator
+        ↓
+Validated SQL Response
+Current Product Boundary
+
+The backend now supports the core journey:
+
+Dataset
+   ↓
+Dataset Understanding
+   ↓
+Natural-Language Question
+   ↓
+Schema-aware Context
+   ↓
+AI SQL Generation
+   ↓
+SQL Validation
+   ↓
+Read-only Query Execution
+   ↓
+Query History
+Next Development Focus
+
+Continue Phase 2.3 toward:
+
+Generated SQL
+   ↓
+Automatic Execution
+   ↓
+Results API
+   ↓
+Result Tables
+   ↓
+KPI summaries
+   ↓
+Chart generation
+   ↓
+SQL explanation
+   ↓
+Result export

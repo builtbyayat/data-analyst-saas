@@ -18,6 +18,7 @@ import { WorkspaceAccessService } from '../workspaces/workspace-access.service.j
 
 import { QueryHistoryService } from './query-history.service.js';
 import { QueryService } from './query.service.js';
+import { SqlGenerationService } from './sql-generation.service.js';
 
 interface AuthenticatedRequest
   extends ExpressRequest {
@@ -32,6 +33,10 @@ interface ExecuteSqlBody {
   sql?: string;
 }
 
+interface GenerateSqlBody {
+  question?: string;
+}
+
 @Controller(
   'workspaces/:workspaceId',
 )
@@ -41,6 +46,8 @@ export class QueryController {
     private readonly queryService: QueryService,
 
     private readonly queryHistoryService: QueryHistoryService,
+
+    private readonly sqlGenerationService: SqlGenerationService,
 
     private readonly workspaceAccessService: WorkspaceAccessService,
   ) {}
@@ -88,6 +95,45 @@ export class QueryController {
       Number.isFinite(parsedLimit)
         ? parsedLimit
         : 100,
+    );
+  }
+
+  @Post(
+    'datasets/:datasetId/generate-sql',
+  )
+  async generateSql(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('datasetId')
+    datasetId: string,
+
+    @Body()
+    body: GenerateSqlBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.sqlGenerationService.generateSql(
+      datasetId,
+      workspaceId,
+      body.question ?? '',
     );
   }
 

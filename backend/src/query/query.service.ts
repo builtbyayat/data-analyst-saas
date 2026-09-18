@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -18,6 +19,7 @@ import { join } from 'node:path';
 
 import { Dataset } from '../datasets/dataset.entity.js';
 import { StorageService } from '../storage/storage.service.js';
+
 import { DuckDBService } from './duckdb.service.js';
 import { QueryHistory } from './query-history.entity.js';
 import { SqlValidatorService } from './sql-validator.service.js';
@@ -26,11 +28,14 @@ export interface DatasetQueryResult {
   columns: string[];
   rows: unknown[][];
   rowCount: number;
+  truncated: boolean;
   executionTimeMs: number;
 }
 
 @Injectable()
 export class QueryService {
+  private readonly maxResultRows = 5000;
+
   constructor(
     @InjectRepository(Dataset)
     private readonly datasetRepository: Repository<Dataset>,
@@ -72,11 +77,37 @@ export class QueryService {
     return dataset;
   }
 
+  private normalizeQueryError(
+    error: unknown,
+  ): HttpException {
+    if (error instanceof HttpException) {
+      return error;
+    }
+
+    return new BadRequestException(
+      'Query execution failed',
+    );
+  }
+
+  private getErrorMessage(
+    error: unknown,
+  ): string {
+    if (error instanceof Error) {
+      return error.message.slice(
+        0,
+        4000,
+      );
+    }
+
+    return 'Unknown query execution error';
+  }
+
   private async executeAgainstDataset(
     dataset: Dataset,
     sql: string,
   ): Promise<DatasetQueryResult> {
-    const startedAt = Date.now();
+    const startedAt =
+      Date.now();
 
     const parquetBuffer =
       await this.storageService.download(
@@ -103,49 +134,46 @@ export class QueryService {
         parquetBuffer,
       );
 
-      const duckDbPath =
-        parquetPath.replace(
-          /\\/g,
-          '/',
-        );
-
-      const escapedPath =
-        duckDbPath.replace(
-          /'/g,
-          "''",
-        );
-
-      await this.duckDbService.query(`
-        CREATE OR REPLACE TEMP VIEW dataset AS
+      const limitedSql = `
         SELECT *
-        FROM read_parquet(
-          '${escapedPath}'
-        )
-      `);
+        FROM (
+          ${sql}
+        ) AS user_query
+        LIMIT ${this.maxResultRows + 1}
+      `;
 
       const result =
-        await this.duckDbService.query(
-          sql,
+        await this.duckDbService.queryDataset(
+          parquetPath,
+          limitedSql,
         );
+
+      const truncated =
+        result.rows.length >
+        this.maxResultRows;
+
+      const rows = truncated
+        ? result.rows.slice(
+            0,
+            this.maxResultRows,
+          )
+        : result.rows;
 
       return {
         columns:
           result.columns,
 
-        rows:
-          result.rows,
+        rows,
 
         rowCount:
-          result.rows.length,
+          rows.length,
+
+        truncated,
 
         executionTimeMs:
           Date.now() - startedAt,
       };
     } finally {
-      await this.duckDbService.query(`
-        DROP VIEW IF EXISTS dataset
-      `);
-
       await rm(
         tempDirectory,
         {
@@ -161,29 +189,35 @@ export class QueryService {
     workspaceId: string,
     limit = 100,
   ): Promise<DatasetQueryResult> {
-    const dataset =
-      await this.getDataset(
-        datasetId,
-        workspaceId,
-      );
+    try {
+      const dataset =
+        await this.getDataset(
+          datasetId,
+          workspaceId,
+        );
 
-    const safeLimit =
-      Math.max(
-        1,
-        Math.min(
-          Math.floor(limit),
-          1000,
-        ),
-      );
+      const safeLimit =
+        Math.max(
+          1,
+          Math.min(
+            Math.floor(limit),
+            1000,
+          ),
+        );
 
-    return this.executeAgainstDataset(
-      dataset,
-      `
-        SELECT *
-        FROM dataset
-        LIMIT ${safeLimit}
-      `,
-    );
+      return await this.executeAgainstDataset(
+        dataset,
+        `
+          SELECT *
+          FROM dataset
+          LIMIT ${safeLimit}
+        `,
+      );
+    } catch (error) {
+      throw this.normalizeQueryError(
+        error,
+      );
+    }
   }
 
   async executeSql(
@@ -192,21 +226,29 @@ export class QueryService {
     userId: string,
     sql: string,
   ): Promise<DatasetQueryResult> {
-    const startedAt = Date.now();
+    const startedAt =
+      Date.now();
 
-    let dataset: Dataset;
+    let failureType:
+      | 'validation'
+      | 'execution'
+      | null = null;
 
     try {
-      dataset =
+      const dataset =
         await this.getDataset(
           datasetId,
           workspaceId,
         );
 
+      failureType = 'validation';
+
       const validatedSql =
         this.sqlValidatorService.validate(
           sql,
         );
+
+      failureType = 'execution';
 
       const result =
         await this.executeAgainstDataset(
@@ -220,10 +262,12 @@ export class QueryService {
           datasetId,
           userId,
           sql: validatedSql,
-          rowCount: result.rowCount,
+          rowCount:
+            result.rowCount,
           executionTimeMs:
             result.executionTimeMs,
           status: 'success',
+          failureType: null,
           errorMessage: null,
         }),
       );
@@ -242,17 +286,17 @@ export class QueryService {
           rowCount: null,
           executionTimeMs,
           status: 'failed',
+          failureType,
           errorMessage:
-            error instanceof Error
-              ? error.message.slice(
-                  0,
-                  4000,
-                )
-              : 'Unknown query execution error',
+            this.getErrorMessage(
+              error,
+            ),
         }),
       );
 
-      throw error;
+      throw this.normalizeQueryError(
+        error,
+      );
     }
   }
 }
