@@ -29,6 +29,7 @@ export interface QueryResult {
   executionTimeMs: number;
   summary: QuerySummary;
   visualization: QueryVisualization;
+  followUpQuestions: string[];
 }
 
 export interface GenerateSqlResult {
@@ -46,12 +47,13 @@ export interface NaturalLanguageQueryResult {
   result: QueryResult;
 }
 
-interface QueryRequestOptions {
+export interface QueryRequestOptions {
   workspaceId: string;
   datasetId: string;
+  conversationId?: string | null;
 }
 
-class QueryApiError extends Error {
+export class QueryApiError extends Error {
   status: number;
 
   constructor(message: string, status: number) {
@@ -92,7 +94,11 @@ async function request<T>(
 
   let data: unknown = null;
 
-  if (contentType.includes("application/json")) {
+  if (
+    contentType.includes(
+      "application/json",
+    )
+  ) {
     data = await response.json();
   } else {
     const text = await response.text();
@@ -108,14 +114,21 @@ async function request<T>(
       data !== null &&
       "message" in data
     ) {
-      const value = (data as { message?: unknown }).message;
+      const value = (
+        data as {
+          message?: unknown;
+        }
+      ).message;
 
       if (typeof value === "string") {
         message = value;
       } else if (Array.isArray(value)) {
         message = value.join(", ");
       }
-    } else if (typeof data === "string" && data) {
+    } else if (
+      typeof data === "string" &&
+      data
+    ) {
       message = data;
     }
 
@@ -134,7 +147,9 @@ function buildDatasetPath({
 }: QueryRequestOptions): string {
   return `/backend/workspaces/${encodeURIComponent(
     workspaceId,
-  )}/datasets/${encodeURIComponent(datasetId)}`;
+  )}/datasets/${encodeURIComponent(
+    datasetId,
+  )}`;
 }
 
 export const queryApi = {
@@ -143,11 +158,15 @@ export const queryApi = {
     question: string,
   ): Promise<GenerateSqlResult> {
     return request<GenerateSqlResult>(
-      `${buildDatasetPath(options)}/generate-sql`,
+      `${buildDatasetPath(
+        options,
+      )}/generate-sql`,
       {
         method: "POST",
         body: JSON.stringify({
           question,
+          conversationId:
+            options.conversationId ?? null,
         }),
       },
     );
@@ -156,13 +175,20 @@ export const queryApi = {
   async executeSql(
     options: QueryRequestOptions,
     sql: string,
+    question?: string | null,
   ): Promise<QueryResult> {
     return request<QueryResult>(
-      `${buildDatasetPath(options)}/query`,
+      `${buildDatasetPath(
+        options,
+      )}/query`,
       {
         method: "POST",
         body: JSON.stringify({
           sql,
+          question:
+            question?.trim() || null,
+          conversationId:
+            options.conversationId ?? null,
         }),
       },
     );
@@ -180,10 +206,10 @@ export const queryApi = {
         method: "POST",
         body: JSON.stringify({
           question,
+          conversationId:
+            options.conversationId ?? null,
         }),
       },
     );
   },
 };
-
-export { QueryApiError };

@@ -1,15 +1,10 @@
-import {
-  MigrationInterface,
-  QueryRunner,
-  TableColumn,
-} from 'typeorm';
+import type { MigrationInterface, QueryRunner } from 'typeorm';
+import { TableColumn } from 'typeorm';
 
 export class AddDatasetQueryObjectKey1789578500000
   implements MigrationInterface
 {
-  async up(
-    queryRunner: QueryRunner,
-  ): Promise<void> {
+  async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.addColumn(
       'datasets',
       new TableColumn({
@@ -20,9 +15,7 @@ export class AddDatasetQueryObjectKey1789578500000
     );
   }
 
-  async down(
-    queryRunner: QueryRunner,
-  ): Promise<void> {
+  async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropColumn(
       'datasets',
       'queryObjectKey',

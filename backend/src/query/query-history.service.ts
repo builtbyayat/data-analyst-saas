@@ -12,21 +12,42 @@ import { QueryHistory } from './query-history.entity.js';
 
 export interface QueryHistoryListItem {
   id: string;
+
   datasetId: string;
+
+  conversationId:
+    string | null;
+
+  question:
+    string | null;
+
   sql: string;
-  rowCount: number | null;
-  executionTimeMs: number | null;
-  status: 'success' | 'failed';
-  failureType: 'validation' | 'execution' | null;
-  errorMessage: string | null;
-  createdAt: Date;
+
+  rowCount:
+    number | null;
+
+  executionTimeMs:
+    number | null;
+
+  status:
+    'success' | 'failed';
+
+  failureType:
+    'validation' | 'execution' | null;
+
+  errorMessage:
+    string | null;
+
+  createdAt:
+    Date;
 }
 
 @Injectable()
 export class QueryHistoryService {
   constructor(
     @InjectRepository(QueryHistory)
-    private readonly queryHistoryRepository: Repository<QueryHistory>,
+    private readonly queryHistoryRepository:
+      Repository<QueryHistory>,
   ) {}
 
   async listForUser(
@@ -34,6 +55,7 @@ export class QueryHistoryService {
     userId: string,
     datasetId?: string,
     limit = 50,
+    conversationId?: string,
   ): Promise<QueryHistoryListItem[]> {
     const safeLimit =
       Math.max(
@@ -51,7 +73,13 @@ export class QueryHistoryService {
       };
 
     if (datasetId) {
-      where.datasetId = datasetId;
+      where.datasetId =
+        datasetId;
+    }
+
+    if (conversationId) {
+      where.conversationId =
+        conversationId;
     }
 
     const history =
@@ -67,12 +95,20 @@ export class QueryHistoryService {
 
     return history.map(
       (item) => ({
-        id: item.id,
+        id:
+          item.id,
 
         datasetId:
           item.datasetId,
 
-        sql: item.sql,
+        conversationId:
+          item.conversationId,
+
+        question:
+          item.question,
+
+        sql:
+          item.sql,
 
         rowCount:
           item.rowCount,

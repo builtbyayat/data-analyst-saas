@@ -1,6 +1,5 @@
+import type { MigrationInterface, QueryRunner } from 'typeorm';
 import {
-  MigrationInterface,
-  QueryRunner,
   Table,
   TableForeignKey,
   TableIndex,
@@ -9,9 +8,7 @@ import {
 export class AddQueryHistory1789579000000
   implements MigrationInterface
 {
-  async up(
-    queryRunner: QueryRunner,
-  ): Promise<void> {
+  async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.createTable(
       new Table({
         name: 'query_history',
@@ -68,32 +65,29 @@ export class AddQueryHistory1789579000000
       true,
     );
 
-    const workspaceForeignKey =
-      new TableForeignKey({
-        name: 'FK_query_history_workspace',
-        columnNames: ['workspaceId'],
-        referencedTableName: 'workspaces',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      });
+    const workspaceForeignKey = new TableForeignKey({
+      name: 'FK_query_history_workspace',
+      columnNames: ['workspaceId'],
+      referencedTableName: 'workspaces',
+      referencedColumnNames: ['id'],
+      onDelete: 'CASCADE',
+    });
 
-    const datasetForeignKey =
-      new TableForeignKey({
-        name: 'FK_query_history_dataset',
-        columnNames: ['datasetId'],
-        referencedTableName: 'datasets',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      });
+    const datasetForeignKey = new TableForeignKey({
+      name: 'FK_query_history_dataset',
+      columnNames: ['datasetId'],
+      referencedTableName: 'datasets',
+      referencedColumnNames: ['id'],
+      onDelete: 'CASCADE',
+    });
 
-    const userForeignKey =
-      new TableForeignKey({
-        name: 'FK_query_history_user',
-        columnNames: ['userId'],
-        referencedTableName: 'users',
-        referencedColumnNames: ['id'],
-        onDelete: 'CASCADE',
-      });
+    const userForeignKey = new TableForeignKey({
+      name: 'FK_query_history_user',
+      columnNames: ['userId'],
+      referencedTableName: 'users',
+      referencedColumnNames: ['id'],
+      onDelete: 'CASCADE',
+    });
 
     await queryRunner.createForeignKey(
       'query_history',
@@ -144,9 +138,7 @@ export class AddQueryHistory1789579000000
     );
   }
 
-  async down(
-    queryRunner: QueryRunner,
-  ): Promise<void> {
+  async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.dropIndex(
       'query_history',
       'IDX_query_history_user_createdAt',

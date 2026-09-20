@@ -50,6 +50,8 @@ interface ExecuteSqlBody {
   sql?: string;
 
   question?: string;
+
+  conversationId?: string;
 }
 
 interface GenerateSqlBody {
@@ -58,6 +60,8 @@ interface GenerateSqlBody {
 
 interface NaturalLanguageQueryBody {
   question?: string;
+
+  conversationId?: string;
 }
 
 @Controller(
@@ -203,6 +207,8 @@ export class QueryController {
       body.sql ?? '',
       body.question ??
         null,
+      body.conversationId ??
+        null,
     );
   }
 
@@ -243,6 +249,8 @@ export class QueryController {
       workspaceId,
       userId,
       body.question ?? '',
+      body.conversationId ??
+        null,
     );
   }
 
@@ -284,6 +292,10 @@ export class QueryController {
         workspaceId,
         userId,
         body.sql ?? '',
+        body.question ??
+          null,
+        body.conversationId ??
+          null,
       );
 
     const csv =
@@ -319,6 +331,9 @@ export class QueryController {
     @Query('limit')
     limit?: string,
 
+    @Query('conversationId')
+    conversationId?: string,
+
     @Request()
     request?: AuthenticatedRequest,
   ) {
@@ -352,6 +367,7 @@ export class QueryController {
       )
         ? parsedLimit
         : 50,
+      conversationId,
     );
   }
 }

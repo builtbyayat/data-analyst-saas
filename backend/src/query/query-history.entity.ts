@@ -25,6 +25,12 @@ export class QueryHistory {
   @Column({ type: 'uuid' })
   userId!: string;
 
+  @Column({ type: 'uuid', nullable: true })
+  conversationId!: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  question!: string | null;
+
   @Column({ type: 'text' })
   sql!: string;
 
