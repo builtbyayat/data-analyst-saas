@@ -33,10 +33,6 @@ import {
   ResultExportService,
 } from './result-export.service.js';
 
-import {
-  SqlGenerationService,
-} from './sql-generation.service.js';
-
 interface AuthenticatedRequest
   extends ExpressRequest {
   user: {
@@ -56,12 +52,18 @@ interface ExecuteSqlBody {
 
 interface GenerateSqlBody {
   question?: string;
+
+  conversationId?: string;
 }
 
 interface NaturalLanguageQueryBody {
   question?: string;
 
   conversationId?: string;
+}
+
+interface ValidateSqlBody {
+  sql?: string;
 }
 
 @Controller(
@@ -73,8 +75,6 @@ export class QueryController {
     private readonly queryService: QueryService,
 
     private readonly queryHistoryService: QueryHistoryService,
-
-    private readonly sqlGenerationService: SqlGenerationService,
 
     private readonly workspaceAccessService: WorkspaceAccessService,
 
@@ -161,10 +161,52 @@ export class QueryController {
       workspaceId,
     );
 
-    return this.sqlGenerationService.generateSql(
+    return this.queryService.generateSqlForUser(
       datasetId,
       workspaceId,
+      userId,
       body.question ?? '',
+      body.conversationId ??
+        null,
+    );
+  }
+
+  @Post(
+    'datasets/:datasetId/validate-sql',
+  )
+  async validateSql(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('datasetId')
+    datasetId: string,
+
+    @Body()
+    body: ValidateSqlBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.queryService.validateSql(
+      datasetId,
+      workspaceId,
+      body.sql ?? '',
     );
   }
 

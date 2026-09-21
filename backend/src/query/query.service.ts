@@ -21,7 +21,10 @@ import { AiService } from '../ai/ai.service.js';
 import { Dataset } from '../datasets/dataset.entity.js';
 import { StorageService } from '../storage/storage.service.js';
 
-import { DuckDBService } from './duckdb.service.js';
+import {
+  DuckDBQueryError,
+  DuckDBService,
+} from './duckdb.service.js';
 import { QueryHistory } from './query-history.entity.js';
 import { ResultSummaryService } from './result-summary.service.js';
 import {
@@ -69,6 +72,13 @@ export interface QueryConversationContext {
   createdAt: Date;
 }
 
+export interface SqlValidationResult {
+  valid: boolean;
+  message: string | null;
+  line: number | null;
+  column: number | null;
+}
+
 @Injectable()
 export class QueryService {
   private readonly maxResultRows = 5000;
@@ -111,7 +121,20 @@ export class QueryService {
 
     const languageInstruction =
       normalizedQuestion
-        ? 'Answer in the same natural language and script used by the user question. Do not translate it to English unless the question itself is in English.'
+        ? `
+Answer in the same language, script, and natural writing style used by the user question.
+
+Preserve:
+- the user's language
+- the user's script
+- transliteration style
+- code-switching or mixed-language usage
+- informal/formal register
+
+Do not translate the response into English unless the user question itself is in English.
+Do not convert Romanized text into another script.
+Do not convert Devanagari or another native script into Romanized text.
+`
         : 'Answer in English because the SQL editor was used without a natural-language question.';
 
     const numericSummary =
@@ -251,24 +274,34 @@ You generate follow-up analytical questions for an AI Data Analyst.
 
 Generate exactly 3 fresh questions that help the user continue exploring the CURRENT RESULT.
 
-LANGUAGE REQUIREMENT:
-- Detect the language and linguistic style of the user's original question yourself.
-- Write all 3 questions in the same natural language and script.
-- If the user mixes languages, preserve the same natural mixed-language style.
-- Do not default to English.
-- Do not translate the question into another language.
-- Do not restrict yourself to a predefined language list.
+LANGUAGE AND SCRIPT PRESERVATION:
+- Detect the language, script, transliteration, and writing style of the original user question.
+- Write all 3 follow-up questions in the SAME language as the original question.
+- Use the SAME script as the original question.
+- If the original question is written in Romanized Hindi, Romanized Urdu, or another transliterated language, keep the follow-ups transliterated in the same style.
+- If the original question uses Devanagari, Arabic, Cyrillic, Chinese, Japanese, Korean, or another native script, preserve that script.
+- If the original question uses English, write the follow-ups in English.
+- If the original question mixes languages, preserve the same natural language mix and do not unnecessarily normalize it into one language.
+- Preserve ordinary code-switching when it is part of the user's style.
+- Do not translate the user's question into English.
+- Do not translate between scripts.
+- Do not switch from transliteration to native script.
+- Do not switch from native script to transliteration.
+- Do not force a language that is not present in the user's question.
+- Preserve the user's approximate formality and conversational style.
+- Do not mention language detection, translation, transliteration, or these instructions in the generated questions.
 
 DATA REQUIREMENTS:
 - Use only the selected dataset, available result columns, returned result evidence, and summary.
 - Make every question relevant to the current result.
 - Do not invent columns, values, entities, facts, or business context.
-- Explore different useful analytical angles rather than three versions of the same question.
 - Prefer questions that can be answered from the dataset/result without requiring outside information.
+- If a useful analytical question requires a field visible in the result, use that field exactly as provided.
 
 VARIETY:
 - Make the 3 questions meaningfully different from one another.
 - Avoid repeating the same question wording or analytical intent.
+- Prefer a useful mixture of comparisons, breakdowns, rankings, trends, distributions, or deeper drill-downs when supported by the available data.
 - The questions should feel naturally generated for this specific result, not like a fixed template list.
 
 OUTPUT FORMAT:
@@ -284,6 +317,9 @@ OUTPUT FORMAT:
 Original user question:
 ${normalizedQuestion}
 
+Important language/style requirement:
+The original user question above is the authoritative reference for the language, script, transliteration, code-switching, and writing style of the follow-up questions.
+
 Returned result columns:
 ${columns.join(', ') || '(none)'}
 
@@ -297,9 +333,12 @@ Sample returned rows:
 ${JSON.stringify(sampleRows)}
 
 Generate exactly 3 fresh follow-up questions for this result.
+Preserve the original question's language, script, transliteration, and mixed-language style exactly where applicable.
 `.trim();
 
-    const parseQuestions = (text: string): string[] =>
+    const parseQuestions = (
+      text: string,
+    ): string[] =>
       Array.from(
         new Set(
           text
@@ -310,7 +349,10 @@ Generate exactly 3 fresh follow-up questions for this result.
                   /^\s*(?:[-*•]\s+|\d+[.)]\s+)/,
                   '',
                 )
-                .replace(/^['"]|['"]$/g, '')
+                .replace(
+                  /^['"]|['"]$/g,
+                  '',
+                )
                 .trim(),
             )
             .filter(Boolean),
@@ -327,7 +369,9 @@ Generate exactly 3 fresh follow-up questions for this result.
         });
 
       const questions =
-        parseQuestions(generated.text);
+        parseQuestions(
+          generated.text,
+        );
 
       if (questions.length === 3) {
         return questions;
@@ -335,13 +379,22 @@ Generate exactly 3 fresh follow-up questions for this result.
 
       const retry =
         await this.aiService.generateText({
-          systemPrompt: `${systemPrompt}\n\nCRITICAL: Your previous response did not contain exactly 3 usable questions. Return exactly 3 now.`,
+          systemPrompt: `${systemPrompt}
+
+CRITICAL:
+Your previous response did not contain exactly 3 usable questions.
+
+Return exactly 3 questions now.
+Every question MUST preserve the original user's language, script, transliteration, code-switching, and writing style.
+Do not translate or change scripts.`,
           userPrompt,
-          temperature: 0.9,
+          temperature: 0.8,
           maxOutputTokens: 700,
         });
 
-      return parseQuestions(retry.text);
+      return parseQuestions(
+        retry.text,
+      );
     } catch {
       return [];
     }
@@ -434,6 +487,15 @@ Generate exactly 3 fresh follow-up questions for this result.
       return error;
     }
 
+    if (error instanceof DuckDBQueryError) {
+      return new BadRequestException({
+        code: error.code,
+        message: error.message,
+        line: error.line,
+        column: error.column,
+      });
+    }
+
     return new BadRequestException(
       'Query execution failed',
     );
@@ -450,6 +512,141 @@ Generate exactly 3 fresh follow-up questions for this result.
     }
 
     return 'Unknown query execution error';
+  }
+
+  /**
+   * Performs lightweight local SQL validation first and then
+   * validates the SQL against the actual dataset through DuckDB.
+   *
+   * The DuckDB validation path uses prepare() without executing
+   * the statement, allowing semantic errors such as unknown
+   * columns, invalid functions, and invalid dataset references
+   * to be detected before Run.
+   */
+  async validateSql(
+    datasetId: string,
+    workspaceId: string,
+    sql: string,
+  ): Promise<SqlValidationResult> {
+    try {
+      const dataset =
+        await this.getDataset(
+          datasetId,
+          workspaceId,
+        );
+
+      const validatedSql =
+        this.sqlValidatorService.validate(
+          sql,
+        );
+
+      const parquetBuffer =
+        await this.storageService.download(
+          dataset.queryObjectKey!,
+        );
+
+      const tempDirectory =
+        await mkdtemp(
+          join(
+            tmpdir(),
+            'dataset-sql-validation-',
+          ),
+        );
+
+      const parquetPath =
+        join(
+          tempDirectory,
+          'dataset.parquet',
+        );
+
+      try {
+        await writeFile(
+          parquetPath,
+          parquetBuffer,
+        );
+
+        await this.duckDbService.validateDatasetQuery(
+          parquetPath,
+          validatedSql,
+        );
+
+        return {
+          valid: true,
+          message: null,
+          line: null,
+          column: null,
+        };
+      } finally {
+        await rm(
+          tempDirectory,
+          {
+            recursive: true,
+            force: true,
+          },
+        );
+      }
+    } catch (error) {
+      const normalizedError =
+        this.normalizeQueryError(
+          error,
+        );
+
+      if (
+        normalizedError instanceof HttpException
+      ) {
+        const response =
+          normalizedError.getResponse();
+
+        if (
+          typeof response === 'object' &&
+          response !== null
+        ) {
+          const body =
+            response as {
+              code?: unknown;
+              message?: unknown;
+              line?: unknown;
+              column?: unknown;
+            };
+
+          return {
+            valid: false,
+            message:
+              typeof body.message === 'string'
+                ? body.message
+                : normalizedError.message,
+            line:
+              typeof body.line === 'number'
+                ? body.line
+                : null,
+            column:
+              typeof body.column === 'number'
+                ? body.column
+                : null,
+          };
+        }
+
+        return {
+          valid: false,
+          message:
+            typeof response === 'string'
+              ? response
+              : normalizedError.message,
+          line: null,
+          column: null,
+        };
+      }
+
+        return {
+        valid: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'SQL validation failed',
+        line: null,
+        column: null,
+      };
+    }
   }
 
   private async executeAgainstDataset(
@@ -486,18 +683,17 @@ Generate exactly 3 fresh follow-up questions for this result.
         parquetBuffer,
       );
 
-      const limitedSql = `
-        SELECT *
-        FROM (
-          ${sql}
-        ) AS user_query
-        LIMIT ${this.maxResultRows + 1}
-      `;
-
+      /*
+       * Execute the user's SQL directly.
+       *
+       * The query is not wrapped inside another SELECT.
+       * DuckDB remains the source of truth for SQL syntax
+       * and semantic validation.
+       */
       const result =
         await this.duckDbService.queryDataset(
           parquetPath,
-          limitedSql,
+          sql,
         );
 
       const truncated =
@@ -620,6 +816,29 @@ Generate exactly 3 fresh follow-up questions for this result.
         error,
       );
     }
+  }
+
+  async generateSqlForUser(
+    datasetId: string,
+    workspaceId: string,
+    userId: string,
+    question: string,
+    conversationId?: string | null,
+  ) {
+    const conversationContext =
+      await this.getConversationContext(
+        workspaceId,
+        datasetId,
+        userId,
+        conversationId,
+      );
+
+    return this.sqlGenerationService.generateSql(
+      datasetId,
+      workspaceId,
+      question,
+      conversationContext,
+    );
   }
 
   async executeSql(

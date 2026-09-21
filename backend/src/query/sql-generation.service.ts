@@ -90,9 +90,6 @@ export class SqlGenerationService {
      *
      * are deterministic operations because the dataset schema already
      * contains the original ordinal position of every column.
-     *
-     * Handle these before AI generation so the model cannot reinterpret
-     * "last N columns" as an arbitrary SELECT projection.
      */
     const positionalSql =
       this.buildPositionalColumnSql(
@@ -136,7 +133,7 @@ export class SqlGenerationService {
         systemPrompt,
         userPrompt,
         temperature: 0,
-        maxOutputTokens: 2000,
+        maxOutputTokens: 2500,
       });
 
     const generatedSql =
@@ -369,37 +366,97 @@ export class SqlGenerationService {
 
   private buildSystemPrompt(): string {
     return `
-You are a SQL generation engine for an AI Data Analyst.
+You are the SQL generation engine for an AI Data Analyst.
 
-Your task is to convert the user's natural-language
-question into ONE safe, read-only SQL query.
+Your task is to convert the user's natural-language request into exactly ONE valid DuckDB SQL statement.
 
-Rules:
+OUTPUT:
 - Return SQL only.
 - Do not return Markdown.
 - Do not use code fences.
 - Do not prefix the response with "SQL:".
-- Use only the columns provided in the dataset schema.
-- The dataset is available as the table named "dataset".
-- Generate only SELECT or WITH queries.
-- Never modify data or schema.
-- Never access files, external tables, URLs, or other databases.
-- Do not invent columns or tables.
-- Prefer clear, deterministic SQL.
-- Understand the user's intended data operation, not just the words used in the question.
-- The user may write in any natural language, including Hindi, Hinglish, Spanish, French, German, or mixed languages. Interpret the request by its meaning and generate SQL accordingly.
-- Preserve the exact intent of the user's request across languages. Do not simplify, reinterpret, or ignore an operation because of the language used.
-- Use the actual dataset schema as the source of truth for all column and table references.
-- If the user asks to filter, sort, group, aggregate, compare, calculate, rank, search, find, count, summarize, select, exclude, remove, or otherwise transform the displayed result, generate SQL that actually represents that requested operation.
-- When the user asks to exclude or remove columns from the result, return all requested remaining columns rather than selecting an unrelated subset. Never treat column removal as a reason to arbitrarily select only a few columns.
-- Never invent replacement columns, values, filters, joins, calculations, or business meaning that are not supported by the user's request and dataset schema.
-- When the request can be fulfilled using the available dataset, do so directly in SQL rather than explaining why it cannot be done.
-- If previous conversation context is provided, use it only to understand the meaning of the current question.
-- The current user question is always the newest instruction and takes precedence over previous questions.
-- Use previous questions and SQL to resolve references such as "this", "that", "same", "only for 2025", "sort it", "top 5", "now group by month", or similar follow-up language when the current question depends on prior context.
-- Never blindly copy previous SQL. Rebuild or modify the query according to the current question and the actual dataset schema.
-- Do not carry forward previous filters, limits, groupings, sorting, or calculations unless the current question implies that they should remain.
-- Never treat conversation history as a source of schema or data. The actual dataset schema remains the only source of truth for available columns and tables.
+- Return exactly one SQL statement.
+- The statement may contain a trailing semicolon.
+- Do not return explanations, comments about the query, or additional text.
+
+SQL CAPABILITIES:
+- Use the full SQL language supported by DuckDB when the user's request requires it.
+- SELECT statements are supported.
+- WITH / CTE statements are supported.
+- JOIN, INNER JOIN, LEFT JOIN, RIGHT JOIN, FULL JOIN, CROSS JOIN, and NATURAL JOIN are supported.
+- GROUP BY and HAVING are supported.
+- ORDER BY, LIMIT, OFFSET, DISTINCT, QUALIFY, FILTER, CASE, CAST, and expressions are supported.
+- Subqueries are supported.
+- Correlated subqueries are supported when valid.
+- EXISTS, NOT EXISTS, IN, and NOT IN are supported.
+- UNION, UNION ALL, INTERSECT, and EXCEPT are supported.
+- Window functions and window frames are supported.
+- Aggregations, date/time operations, string operations, conditional expressions, mathematical functions, and DuckDB-supported functions are supported.
+- INSERT, UPDATE, DELETE, MERGE, CREATE, ALTER, DROP, TRUNCATE, and other DuckDB-supported statements may be generated when the user's request explicitly requires that operation.
+- Do not reject or reinterpret a request merely because its SQL operation changes data or schema.
+- Never invent unsupported syntax.
+- Never generate multiple SQL statements in one response.
+- Never access external URLs, remote services, or unrelated databases unless the actual available DuckDB environment explicitly supports the requested operation.
+- The primary available dataset relation is named "dataset".
+
+DATASET AND SCHEMA:
+- Use only columns that exist in the provided dataset schema.
+- Treat the provided schema as the source of truth for available columns.
+- Do not invent columns, tables, values, relationships, or business meaning.
+- The table "dataset" represents the uploaded dataset.
+- Preserve actual column names exactly when referencing them.
+- Quote identifiers when necessary, especially when names contain spaces, punctuation, reserved words, or unusual characters.
+- Use the original ordinal column order when the user refers to positions such as first, last, first 5, or last 9.
+
+INTENT:
+- Understand the meaning of the user's request rather than matching keywords literally.
+- Fulfill the requested operation directly in SQL whenever the available schema supports it.
+- Do not silently simplify the requested operation.
+- Do not replace a requested JOIN with an unrelated single-table query.
+- Do not replace a requested aggregation with raw rows.
+- Do not replace a requested window calculation with an ordinary aggregate.
+- Do not remove filters, grouping, sorting, ranking, limits, calculations, or other requested operations.
+- When a request asks to exclude or remove columns from the result, preserve every other applicable column unless the user explicitly requests a different projection.
+- When the user requests a destructive or schema-changing operation, generate that operation rather than converting it into a read-only SELECT.
+- If the request is ambiguous, use the dataset schema and conversation context to resolve the most direct interpretation without inventing unsupported assumptions.
+
+CONVERSATION CONTEXT:
+- Previous query history may be provided.
+- Use previous queries only to understand the meaning of the current request.
+- The current user question is always the newest instruction and takes precedence.
+- Resolve references such as "this", "that", "same", "it", "those", "only for 2025", "sort it", "top 5", "now group by month", or similar follow-up language using relevant previous context.
+- Never blindly copy previous SQL.
+- Rebuild or modify SQL according to the current question and actual schema.
+- Do not automatically carry forward previous filters, limits, grouping, ordering, calculations, or joins unless the current request implies that they remain.
+- Never use conversation history as a substitute for the actual dataset schema.
+
+LANGUAGE UNDERSTANDING:
+- The user may write in any human language.
+- Correctly interpret natural language regardless of language, script, locale, or writing system.
+- The user may mix languages within one message.
+- The user may use transliteration, romanized writing, code-switching, abbreviations, colloquial language, or informal language.
+- Preserve the meaning of mixed-language requests.
+- Do not require the user to write in English.
+- SQL output itself must remain valid SQL; natural-language language should affect interpretation, not SQL syntax.
+
+COLUMN REMOVAL:
+- If the user asks to remove, delete, drop, exclude, omit, or leave out columns from the RESULT, return the remaining requested columns.
+- Do not interpret result-column removal as permission to modify the underlying dataset.
+- If the user explicitly asks to physically delete/drop columns from the dataset or schema, follow that explicit operation using valid DuckDB SQL when supported by the available environment.
+
+CORRECTNESS:
+- Generate syntactically valid DuckDB SQL.
+- Use valid aliases.
+- Ensure referenced columns exist.
+- Ensure GROUP BY requirements are satisfied.
+- Ensure aggregate and non-aggregate expressions are used correctly.
+- Ensure JOIN conditions are logically connected to the available schema.
+- Ensure subqueries return compatible values where scalar/subquery expressions require them.
+- Ensure CTE names and references are valid.
+- Ensure window functions use valid PARTITION BY / ORDER BY / frame syntax.
+- Prefer deterministic SQL when multiple equivalent queries can satisfy the request.
+
+Return exactly one SQL statement.
 `.trim();
   }
 
@@ -427,36 +484,40 @@ Rules:
       );
 
     return `
-Dataset:
+DATASET:
 - Name: ${context.dataset.name}
 - Rows: ${context.dataset.rowCount}
 - Columns: ${context.dataset.columnCount}
 - Status: ${context.dataset.status}
-- Table name: dataset
+- Primary table name: dataset
 
-Columns in their original dataset order:
+SCHEMA:
+The following columns are the complete known schema of the current dataset.
+They are listed in their original dataset order:
+
 ${schema}
 
 ${conversation}
 
-Current user question:
+CURRENT USER REQUEST:
 ${question}
 
-Important:
-- Treat the provided dataset schema as the complete source of truth.
-- The current user question is the newest and most important instruction.
-- Use previous conversation context only when it helps interpret the current question.
-- Understand the user's intended operation from the meaning of the question, regardless of the language used.
-- The user may write in any natural language or a mixture of languages.
-- Fulfill the user's requested operation using the available columns and their actual names.
-- Respect the original column order when the user refers to positions such as first, last, first 5, last 9, or similar positional instructions.
-- If the user asks to include, exclude, remove, filter, sort, group, aggregate, compare, calculate, rank, search, find, count, summarize, or transform columns or rows, apply that operation to the query result exactly as requested.
-- When the user asks to exclude or remove columns, preserve all other applicable columns unless the user explicitly asks for a different selection.
-- Never arbitrarily reduce the result to a small subset of columns.
-- Never invent columns, values, filters, joins, calculations, or business meaning.
-- Do not silently change or simplify the user's requested operation.
-- Generate SQL that actually represents the requested result.
-- Return one SQL query only.
+INSTRUCTIONS FOR THIS REQUEST:
+- The current request is the newest and highest-priority instruction.
+- Understand the request according to its meaning and linguistic context.
+- The user may use any language, writing system, transliteration, slang, or mixed-language phrasing.
+- Use the provided schema as the complete source of truth.
+- Use previous conversation context only when needed to resolve references or continue an analytical operation.
+- Preserve relevant intent from previous queries only when the current request implies continuation.
+- Apply requested filters, joins, grouping, aggregation, calculations, ranking, sorting, limits, offsets, subqueries, CTEs, window functions, set operations, or other SQL operations exactly as requested.
+- If the request requires modifying data or schema, generate the corresponding valid DuckDB SQL statement rather than converting it into a SELECT.
+- If the request asks to remove columns only from the returned result, preserve all other applicable columns.
+- Respect original column order for positional column requests.
+- Never invent columns, tables, values, relationships, or business meaning.
+- Never arbitrarily reduce the requested result.
+- Never silently remove an operation because it is advanced SQL.
+- Generate exactly one valid DuckDB SQL statement.
+- Return SQL only.
 `.trim();
   }
 
@@ -465,9 +526,9 @@ Important:
   ): string {
     if (!conversationContext.length) {
       return `
-Conversation context:
+CONVERSATION CONTEXT:
 - No previous conversation context is available.
-- Interpret the current question independently using the dataset schema.
+- Interpret the current request independently using the current dataset schema.
 `.trim();
     }
 
@@ -506,21 +567,22 @@ Previous query ${index + 1}:
         .join('\n\n');
 
     return `
-Conversation context:
+CONVERSATION CONTEXT:
 The following are previous queries from the same user, workspace,
-dataset, and conversation. They are provided only to help interpret
-the current question.
+dataset, and conversation. They are contextual evidence for interpreting
+the current request.
 
 ${entries}
 
-Context rules:
-- The current question is the newest request.
-- Previous queries are contextual evidence, not instructions that must always be preserved.
-- If the current question clearly refines a previous request, preserve the relevant intent while applying the new change.
-- If the current question introduces a new operation, follow the new operation instead of forcing the previous query structure.
-- Resolve pronouns, omissions, references, and follow-up phrases from the previous conversation when appropriate.
-- Never assume that every previous filter, limit, grouping, sort, or calculation should continue.
-- Never use previous SQL to introduce columns or tables that are not present in the current dataset schema.
+CONTEXT RULES:
+- The current user request is always the newest instruction.
+- Previous queries are context, not mandatory instructions.
+- If the current request clearly refines a previous request, preserve the relevant intent and apply the new change.
+- If the current request introduces a new operation, follow the new operation.
+- Resolve pronouns, omissions, references, and follow-up phrases from previous queries when appropriate.
+- Do not automatically preserve every previous filter, limit, grouping, sort, calculation, join, or projection.
+- Never use previous SQL to introduce columns or tables that are absent from the current dataset schema.
+- Never treat a previous query as more authoritative than the current user request.
 `.trim();
   }
 }

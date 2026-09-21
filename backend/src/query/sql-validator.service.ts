@@ -1,54 +1,8 @@
-import {
-  BadRequestException,
-  Injectable,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 
 @Injectable()
 export class SqlValidatorService {
   private readonly maxSqlLength = 50_000;
-
-  private readonly maxJoins = 10;
-
-  private readonly maxUnions = 10;
-
-  private readonly maxSubqueries = 10;
-
-  private readonly blockedKeywords = [
-    'ATTACH',
-    'CALL',
-    'CHECKPOINT',
-    'COPY',
-    'CREATE',
-    'DELETE',
-    'DETACH',
-    'DROP',
-    'EXPORT',
-    'IMPORT',
-    'INSERT',
-    'INSTALL',
-    'LOAD',
-    'PRAGMA',
-    'REPLACE',
-    'RESET',
-    'SET',
-    'TRUNCATE',
-    'UPDATE',
-    'VACUUM',
-  ];
-
-  private readonly blockedFunctions = [
-    'READ_CSV',
-    'READ_CSV_AUTO',
-    'READ_JSON',
-    'READ_JSON_AUTO',
-    'READ_PARQUET',
-    'PARQUET_SCAN',
-    'GLOB',
-    'HTTPFS',
-    'SQLITE_SCAN',
-    'POSTGRES_SCAN',
-    'MYSQL_SCAN',
-  ];
 
   validate(sql: string): string {
     if (typeof sql !== 'string') {
@@ -75,140 +29,329 @@ export class SqlValidatorService {
       );
     }
 
+    /*
+     * Keep SQL validation correctness-oriented.
+     *
+     * Do not reject valid SQL keywords or statement types such as:
+     * DELETE, UPDATE, INSERT, DROP, ALTER, CREATE, TRUNCATE, MERGE,
+     * CTEs, JOINs, UNIONs, subqueries, window functions, etc.
+     *
+     * This service performs lightweight structural validation only.
+     * DuckDB remains the source of truth for SQL syntax and semantics.
+     */
+
+    this.validateStructure(
+      normalizedSql,
+    );
+
     if (
-      normalizedSql.includes(';')
+      this.hasMultipleStatements(
+        normalizedSql,
+      )
     ) {
       throw new BadRequestException(
         'Multiple SQL statements are not allowed',
       );
     }
 
-    if (
-      /--/.test(normalizedSql) ||
-      /\/\*/.test(normalizedSql) ||
-      /\*\//.test(normalizedSql)
-    ) {
-      throw new BadRequestException(
-        'SQL comments are not allowed',
-      );
-    }
-
-    const withoutLeadingWhitespace =
-      normalizedSql.trimStart();
-
-    const firstKeywordMatch =
-      withoutLeadingWhitespace.match(
-        /^([A-Za-z_][A-Za-z0-9_]*)/,
-      );
-
-    const firstKeyword =
-      firstKeywordMatch?.[1]
-        ?.toUpperCase();
-
-    if (
-      firstKeyword !== 'SELECT' &&
-      firstKeyword !== 'WITH'
-    ) {
-      throw new BadRequestException(
-        'Only SELECT and WITH queries are allowed',
-      );
-    }
-
-    const upperSql =
-      normalizedSql.toUpperCase();
-
-    for (
-      const keyword of
-        this.blockedKeywords
-    ) {
-      const pattern =
-        new RegExp(
-          `\\b${keyword}\\b`,
-          'i',
-        );
-
-      if (
-        pattern.test(upperSql)
-      ) {
-        throw new BadRequestException(
-          `SQL operation is not allowed: ${keyword}`,
-        );
-      }
-    }
-
-    for (
-      const functionName of
-        this.blockedFunctions
-    ) {
-      const pattern =
-        new RegExp(
-          `\\b${functionName}\\s*\\(`,
-          'i',
-        );
-
-      if (
-        pattern.test(upperSql)
-      ) {
-        throw new BadRequestException(
-          `SQL function is not allowed: ${functionName}`,
-        );
-      }
-    }
-
-    const joinCount =
-      this.countMatches(
-        upperSql,
-        /\b(?:INNER\s+|LEFT\s+|RIGHT\s+|FULL\s+|CROSS\s+)?JOIN\b/gi,
-      );
-
-    if (
-      joinCount >
-      this.maxJoins
-    ) {
-      throw new BadRequestException(
-        `Query contains too many JOIN operations. Maximum allowed: ${this.maxJoins}`,
-      );
-    }
-
-    const unionCount =
-      this.countMatches(
-        upperSql,
-        /\bUNION(?:\s+ALL)?\b/gi,
-      );
-
-    if (
-      unionCount >
-      this.maxUnions
-    ) {
-      throw new BadRequestException(
-        `Query contains too many UNION operations. Maximum allowed: ${this.maxUnions}`,
-      );
-    }
-
-    const subqueryCount =
-      this.countMatches(
-        normalizedSql,
-        /\(\s*(?:SELECT|WITH)\b/gi,
-      );
-
-    if (
-      subqueryCount >
-      this.maxSubqueries
-    ) {
-      throw new BadRequestException(
-        `Query contains too many nested subqueries. Maximum allowed: ${this.maxSubqueries}`,
-      );
-    }
-
     return normalizedSql;
   }
 
-  private countMatches(
-    value: string,
-    pattern: RegExp,
-  ): number {
-    return Array.from(
-      value.matchAll(pattern),
-    ).length;
+  private validateStructure(
+    sql: string,
+  ): void {
+    let quote:
+      | "'"
+      | '"'
+      | '`'
+      | null = null;
+
+    let escaped = false;
+    let blockComment = false;
+    let lineComment = false;
+
+    const parentheses: number[] = [];
+
+    for (
+      let index = 0;
+      index < sql.length;
+      index += 1
+    ) {
+      const character =
+        sql[index];
+
+      const nextCharacter =
+        sql[index + 1];
+
+      if (lineComment) {
+        if (
+          character === '\n' ||
+          character === '\r'
+        ) {
+          lineComment = false;
+        }
+
+        continue;
+      }
+
+      if (blockComment) {
+        if (
+          character === '*' &&
+          nextCharacter === '/'
+        ) {
+          blockComment = false;
+          index += 1;
+        }
+
+        continue;
+      }
+
+      if (quote !== null) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+
+        if (
+          character === '\\'
+        ) {
+          escaped = true;
+          continue;
+        }
+
+        if (
+          character === quote
+        ) {
+          /*
+           * SQL escapes quotes by doubling them:
+           *
+           * 'John''s'
+           * "some ""identifier"""
+           * `some ``identifier```
+           */
+          if (
+            nextCharacter ===
+            quote
+          ) {
+            index += 1;
+            continue;
+          }
+
+          quote = null;
+        }
+
+        continue;
+      }
+
+      if (
+        character === '-' &&
+        nextCharacter === '-'
+      ) {
+        lineComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (
+        character === '/' &&
+        nextCharacter === '*'
+      ) {
+        blockComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (
+        character === "'" ||
+        character === '"' ||
+        character === '`'
+      ) {
+        quote = character;
+        continue;
+      }
+
+      if (
+        character === '('
+      ) {
+        parentheses.push(
+          index,
+        );
+        continue;
+      }
+
+      if (
+        character === ')'
+      ) {
+        if (
+          parentheses.length ===
+          0
+        ) {
+          throw new BadRequestException(
+            `Unexpected closing parenthesis at character ${index + 1}`,
+          );
+        }
+
+        parentheses.pop();
+      }
+    }
+
+    if (blockComment) {
+      throw new BadRequestException(
+        'Unterminated block comment',
+      );
+    }
+
+    if (quote !== null) {
+      const quoteLabel =
+        quote === "'"
+          ? 'single'
+          : quote === '"'
+            ? 'double'
+            : 'backtick';
+
+      throw new BadRequestException(
+        `Unterminated ${quoteLabel}-quoted string or identifier`,
+      );
+    }
+
+    if (
+      parentheses.length >
+      0
+    ) {
+      const firstOpen =
+        parentheses[0];
+
+      throw new BadRequestException(
+        `Unclosed parenthesis at character ${firstOpen + 1}`,
+      );
+    }
+  }
+
+  private hasMultipleStatements(
+    sql: string,
+  ): boolean {
+    let quote:
+      | "'"
+      | '"'
+      | '`'
+      | null = null;
+
+    let escaped = false;
+    let blockComment = false;
+    let lineComment = false;
+
+    for (
+      let index = 0;
+      index < sql.length;
+      index += 1
+    ) {
+      const character =
+        sql[index];
+
+      const nextCharacter =
+        sql[index + 1];
+
+      if (lineComment) {
+        if (
+          character === '\n' ||
+          character === '\r'
+        ) {
+          lineComment = false;
+        }
+
+        continue;
+      }
+
+      if (blockComment) {
+        if (
+          character === '*' &&
+          nextCharacter === '/'
+        ) {
+          blockComment = false;
+          index += 1;
+        }
+
+        continue;
+      }
+
+      if (quote !== null) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+
+        if (
+          character === '\\'
+        ) {
+          escaped = true;
+          continue;
+        }
+
+        if (
+          character === quote
+        ) {
+          if (
+            nextCharacter ===
+            quote
+          ) {
+            index += 1;
+            continue;
+          }
+
+          quote = null;
+        }
+
+        continue;
+      }
+
+      if (
+        character === '-' &&
+        nextCharacter === '-'
+      ) {
+        lineComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (
+        character === '/' &&
+        nextCharacter === '*'
+      ) {
+        blockComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (
+        character === "'" ||
+        character === '"' ||
+        character === '`'
+      ) {
+        quote = character;
+        continue;
+      }
+
+      if (
+        character === ';'
+      ) {
+        const remaining =
+          sql
+            .slice(index + 1)
+            .trim();
+
+        /*
+         * A trailing semicolon is valid.
+         * Anything meaningful after it means
+         * another SQL statement.
+         */
+        if (
+          remaining.length > 0
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 }
