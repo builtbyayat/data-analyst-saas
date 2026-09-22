@@ -20,6 +20,48 @@ export interface QueryVisualization {
   [key: string]: unknown;
 }
 
+export type AIInsightType =
+  | "summary"
+  | "trend"
+  | "anomaly"
+  | "comparison"
+  | "distribution"
+  | "relationship"
+  | "finding";
+
+export interface AIInsightEvidence {
+  datasetId?: string;
+  datasetName?: string;
+  operation?: string;
+  column?: string;
+  value?: unknown;
+  baseline?: unknown;
+  change?: unknown;
+  source?: string;
+}
+
+export interface AIInsight {
+  type: AIInsightType;
+  title: string;
+  description: string;
+  importance: "high" | "medium" | "low";
+  evidence: AIInsightEvidence[];
+}
+
+export interface AIInsightsResult {
+  status: "success" | "empty" | "error";
+  summary: string;
+  insights: AIInsight[];
+  anomalies: AIInsight[];
+  grounding: {
+    datasetIds: string[];
+    sql?: string;
+    analyticsOperations: string[];
+    evidenceAvailable: boolean;
+  };
+  warnings: string[];
+}
+
 export interface QueryResult {
   sql: string;
   columns: string[];
@@ -29,6 +71,8 @@ export interface QueryResult {
   executionTimeMs: number;
   summary: QuerySummary;
   visualization: QueryVisualization;
+  explanation?: string | null;
+  aiInsights?: AIInsightsResult | null;
   followUpQuestions: string[];
 }
 
@@ -53,10 +97,26 @@ export interface QueryRequestOptions {
   conversationId?: string | null;
 }
 
+export interface MultiDatasetQueryRequestOptions {
+  workspaceId: string;
+  datasetIds: string[];
+  conversationId?: string | null;
+}
+
+export interface SqlValidationResult {
+  valid: boolean;
+  message: string | null;
+  line: number | null;
+  column: number | null;
+}
+
 export class QueryApiError extends Error {
   status: number;
 
-  constructor(message: string, status: number) {
+  constructor(
+    message: string,
+    status: number,
+  ) {
     super(message);
     this.name = "QueryApiError";
     this.status = status;
@@ -71,26 +131,59 @@ async function request<T>(
 
   if (!token) {
     throw new QueryApiError(
-      "You are not authenticated.",
+      "Your session is missing. Please log in again.",
       401,
     );
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.body
-        ? {
-            "Content-Type": "application/json",
-          }
-        : {}),
-      ...(options.headers ?? {}),
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const headers = new Headers(
+    options.headers,
+  );
+
+  headers.set(
+    "Authorization",
+    `Bearer ${token}`,
+  );
+
+  if (
+    options.body &&
+    !headers.has("Content-Type")
+  ) {
+    headers.set(
+      "Content-Type",
+      "application/json",
+    );
+  }
+
+  let response: Response;
+
+  try {
+    response = await fetch(
+      path,
+      {
+        ...options,
+        headers,
+      },
+    );
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new QueryApiError(
+        error.message ||
+          "Network request failed.",
+        0,
+      );
+    }
+
+    throw new QueryApiError(
+      "Network request failed.",
+      0,
+    );
+  }
 
   const contentType =
-    response.headers.get("content-type") ?? "";
+    response.headers.get(
+      "content-type",
+    ) ?? "";
 
   let data: unknown = null;
 
@@ -99,37 +192,39 @@ async function request<T>(
       "application/json",
     )
   ) {
-    data = await response.json();
+    data = await response
+      .json()
+      .catch(() => null);
   } else {
-    const text = await response.text();
-
-    data = text || null;
+    data = await response
+      .text()
+      .catch(() => "");
   }
 
   if (!response.ok) {
-    let message = `Request failed with status ${response.status}.`;
+    let message =
+      "Request failed.";
 
     if (
       typeof data === "object" &&
       data !== null &&
-      "message" in data
-    ) {
-      const value = (
+      "message" in data &&
+      typeof (
         data as {
           message?: unknown;
         }
+      ).message === "string"
+    ) {
+      message = (
+        data as {
+          message: string;
+        }
       ).message;
-
-      if (typeof value === "string") {
-        message = value;
-      } else if (Array.isArray(value)) {
-        message = value.join(", ");
-      }
     } else if (
       typeof data === "string" &&
-      data
+      data.trim()
     ) {
-      message = data;
+      message = data.trim();
     }
 
     throw new QueryApiError(
@@ -141,15 +236,52 @@ async function request<T>(
   return data as T;
 }
 
-function buildDatasetPath({
-  workspaceId,
-  datasetId,
-}: QueryRequestOptions): string {
+function buildDatasetPath(
+  options: QueryRequestOptions,
+): string {
+  return `/backend/workspaces/${encodeURIComponent(
+    options.workspaceId,
+  )}/datasets/${encodeURIComponent(
+    options.datasetId,
+  )}`;
+}
+
+function buildMultiDatasetPath(
+  workspaceId: string,
+): string {
   return `/backend/workspaces/${encodeURIComponent(
     workspaceId,
-  )}/datasets/${encodeURIComponent(
-    datasetId,
-  )}`;
+  )}/multi-datasets`;
+}
+
+function normalizeDatasetIds(
+  datasetIds: string[],
+): string[] {
+  return Array.from(
+    new Set(
+      datasetIds
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function assertMultiDatasetIds(
+  datasetIds: string[],
+): string[] {
+  const normalized =
+    normalizeDatasetIds(
+      datasetIds,
+    );
+
+  if (normalized.length < 2) {
+    throw new QueryApiError(
+      "At least two datasets are required for combined analysis.",
+      400,
+    );
+  }
+
+  return normalized;
 }
 
 export const queryApi = {
@@ -164,9 +296,10 @@ export const queryApi = {
       {
         method: "POST",
         body: JSON.stringify({
-          question,
+          question: question.trim(),
           conversationId:
-            options.conversationId ?? null,
+            options.conversationId ??
+            null,
         }),
       },
     );
@@ -186,9 +319,11 @@ export const queryApi = {
         body: JSON.stringify({
           sql,
           question:
-            question?.trim() || null,
+            question?.trim() ||
+            null,
           conversationId:
-            options.conversationId ?? null,
+            options.conversationId ??
+            null,
         }),
       },
     );
@@ -205,9 +340,117 @@ export const queryApi = {
       {
         method: "POST",
         body: JSON.stringify({
-          question,
+          question:
+            question.trim(),
           conversationId:
-            options.conversationId ?? null,
+            options.conversationId ??
+            null,
+        }),
+      },
+    );
+  },
+
+  async generateMultiDatasetSql(
+    options: MultiDatasetQueryRequestOptions,
+    question: string,
+  ): Promise<GenerateSqlResult> {
+    const datasetIds =
+      assertMultiDatasetIds(
+        options.datasetIds,
+      );
+
+    return request<GenerateSqlResult>(
+      `${buildMultiDatasetPath(
+        options.workspaceId,
+      )}/generate-sql`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          datasetIds,
+          question: question.trim(),
+          conversationId:
+            options.conversationId ??
+            null,
+        }),
+      },
+    );
+  },
+
+  async validateMultiDatasetSql(
+    options: MultiDatasetQueryRequestOptions,
+    sql: string,
+  ): Promise<SqlValidationResult> {
+    const datasetIds =
+      assertMultiDatasetIds(
+        options.datasetIds,
+      );
+
+    return request<SqlValidationResult>(
+      `${buildMultiDatasetPath(
+        options.workspaceId,
+      )}/validate-sql`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          datasetIds,
+          sql,
+        }),
+      },
+    );
+  },
+
+  async executeMultiDatasetSql(
+    options: MultiDatasetQueryRequestOptions,
+    sql: string,
+    question?: string | null,
+  ): Promise<QueryResult> {
+    const datasetIds =
+      assertMultiDatasetIds(
+        options.datasetIds,
+      );
+
+    return request<QueryResult>(
+      `${buildMultiDatasetPath(
+        options.workspaceId,
+      )}/query`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          datasetIds,
+          sql,
+          question:
+            question?.trim() ||
+            null,
+          conversationId:
+            options.conversationId ??
+            null,
+        }),
+      },
+    );
+  },
+
+  async queryMultiDatasetFromQuestion(
+    options: MultiDatasetQueryRequestOptions,
+    question: string,
+  ): Promise<NaturalLanguageQueryResult> {
+    const datasetIds =
+      assertMultiDatasetIds(
+        options.datasetIds,
+      );
+
+    return request<NaturalLanguageQueryResult>(
+      `${buildMultiDatasetPath(
+        options.workspaceId,
+      )}/query-from-question`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          datasetIds,
+          question:
+            question.trim(),
+          conversationId:
+            options.conversationId ??
+            null,
         }),
       },
     );

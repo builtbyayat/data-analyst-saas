@@ -3,6 +3,9 @@
 /node_modules
 /build
 
+# python
+.venv/
+
 # TypeScript build cache
 *.tsbuildinfo
 

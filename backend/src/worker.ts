@@ -1,18 +1,17 @@
 import 'dotenv/config';
 import 'reflect-metadata';
 
-import {
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
-
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { NestFactory } from '@nestjs/core';
+import type { INestApplicationContext } from '@nestjs/common';
 
 import { DataSource } from 'typeorm';
-import { Worker } from 'bullmq';
+
+import {
+  Job,
+  Queue,
+  UnrecoverableError,
+  Worker,
+} from 'bullmq';
 
 import {
   GetObjectCommand,
@@ -25,64 +24,37 @@ import {
   DuckDBInstance,
 } from '@duckdb/node-api';
 
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { parse } from 'csv-parse/sync';
 import * as XLSX from 'xlsx';
 
-import { User } from './users/user.entity.js';
-import { Workspace } from './workspaces/workspace.entity.js';
-import { WorkspaceMember } from './workspaces/workspace-member.entity.js';
-
+import { AppModule } from './app.module.js';
+import {
+  AnalysisJobData,
+  QueryService,
+} from './query/query.service.js';
 import { Dataset } from './datasets/dataset.entity.js';
 import { DatasetColumn } from './datasets/dataset-column.entity.js';
 
+/* -------------------------------------------------------------------------- */
+/*                              Worker config                                 */
+/* -------------------------------------------------------------------------- */
+
 const redisConnection = {
   host: process.env.REDIS_HOST ?? 'localhost',
-
-  port: Number(
-    process.env.REDIS_PORT ?? '6379',
-  ),
+  port: Number(process.env.REDIS_PORT ?? '6379'),
 };
 
-const dataSource = new DataSource({
-  type: 'postgres',
-
-  host:
-    process.env.DATABASE_HOST ?? 'localhost',
-
-  port: Number(
-    process.env.DATABASE_PORT ?? '5432',
-  ),
-
-  username:
-    process.env.DATABASE_USER ?? 'app',
-
-  password:
-    process.env.DATABASE_PASSWORD ?? '',
-
-  database:
-    process.env.DATABASE_NAME ?? 'b2b_saas',
-
-  entities: [
-    User,
-    Workspace,
-    WorkspaceMember,
-    Dataset,
-    DatasetColumn,
-  ],
-
-  synchronize: false,
-});
-
 const s3Client = new S3Client({
-  region:
-    process.env.S3_REGION ?? 'us-east-1',
+  region: process.env.S3_REGION ?? 'us-east-1',
 
-  endpoint:
-    process.env.S3_ENDPOINT,
+  endpoint: process.env.S3_ENDPOINT,
 
   forcePathStyle:
-    (process.env.S3_FORCE_PATH_STYLE ?? 'true') ===
-    'true',
+    (process.env.S3_FORCE_PATH_STYLE ?? 'true') === 'true',
 
   credentials: {
     accessKeyId:
@@ -98,20 +70,157 @@ const s3Client = new S3Client({
 const bucket =
   process.env.S3_BUCKET ?? 'datasets';
 
-type DatasetRecord = Record<
-  string,
-  string
->;
+const analysisConcurrency = Math.max(
+  1,
+  Number(
+    process.env.ANALYSIS_WORKER_CONCURRENCY ?? '2',
+  ),
+);
+
+const datasetIngestionConcurrency = Math.max(
+  1,
+  Number(
+    process.env.DATASET_INGESTION_WORKER_CONCURRENCY ??
+      '2',
+  ),
+);
+
+const analysisJobTimeoutMs = Math.max(
+  1_000,
+  Number(
+    process.env.ANALYSIS_JOB_TIMEOUT_MS ??
+      '900000',
+  ),
+);
+
+const datasetIngestionJobTimeoutMs = Math.max(
+  1_000,
+  Number(
+    process.env.DATASET_INGESTION_JOB_TIMEOUT_MS ??
+      '900000',
+  ),
+);
+
+const completedJobCleanupGraceMs = Math.max(
+  60_000,
+  Number(
+    process.env.BULLMQ_COMPLETED_JOB_CLEANUP_GRACE_MS ??
+      '86400000',
+  ),
+);
+
+const failedJobCleanupGraceMs = Math.max(
+  60_000,
+  Number(
+    process.env.BULLMQ_FAILED_JOB_CLEANUP_GRACE_MS ??
+      '604800000',
+  ),
+);
+
+const cleanupIntervalMs = Math.max(
+  60_000,
+  Number(
+    process.env.BULLMQ_CLEANUP_INTERVAL_MS ??
+      '3600000',
+  ),
+);
+
+const maxStalledCount = Math.max(
+  1,
+  Number(
+    process.env.BULLMQ_MAX_STALLED_COUNT ?? '2',
+  ),
+);
+
+const stalledIntervalMs = Math.max(
+  1_000,
+  Number(
+    process.env.BULLMQ_STALLED_INTERVAL_MS ??
+      '30000',
+  ),
+);
+
+const lockDurationMs = Math.max(
+  30_000,
+  Number(
+    process.env.BULLMQ_LOCK_DURATION_MS ??
+      '60000',
+  ),
+);
+
+/* -------------------------------------------------------------------------- */
+/*                                  Types                                     */
+/* -------------------------------------------------------------------------- */
+
+type DatasetRecord = Record<string, string>;
+
+/* -------------------------------------------------------------------------- */
+/*                                  Helpers                                   */
+/* -------------------------------------------------------------------------- */
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutHandle:
+    | ReturnType<typeof setTimeout>
+    | undefined;
+
+  const timeoutPromise =
+    new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error(message));
+      }, timeoutMs);
+    });
+
+  return Promise.race([
+    promise,
+    timeoutPromise,
+  ]).finally(() => {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  });
+}
+
+async function updateProgress(
+  job: Job,
+  progress: number | Record<string, unknown>,
+): Promise<void> {
+  if (
+    typeof progress === 'number'
+  ) {
+    const normalizedProgress = Math.min(
+      100,
+      Math.max(
+        0,
+        Math.round(progress),
+      ),
+    );
+
+    await job.updateProgress(
+      normalizedProgress,
+    );
+
+    return;
+  }
+
+  await job.updateProgress(
+    progress,
+  );
+}
 
 async function getObjectBuffer(
   objectKey: string,
 ): Promise<Buffer> {
-  const response = await s3Client.send(
-    new GetObjectCommand({
-      Bucket: bucket,
-      Key: objectKey,
-    }),
-  );
+  const response =
+    await s3Client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: objectKey,
+      }),
+    );
 
   if (!response.Body) {
     throw new Error(
@@ -153,22 +262,24 @@ function isMeaningfulValue(
 function normalizeHeaders(
   headers: unknown[],
 ): string[] {
-  const usedNames = new Map<
-    string,
-    number
-  >();
+  const usedNames =
+    new Map<string, number>();
 
   return headers.map(
     (header, index) => {
       const rawName =
-        String(header ?? '').trim();
+        String(
+          header ?? '',
+        ).trim();
 
       const baseName =
         rawName ||
         `column_${index + 1}`;
 
       const previousCount =
-        usedNames.get(baseName) ?? 0;
+        usedNames.get(
+          baseName,
+        ) ?? 0;
 
       const nextCount =
         previousCount + 1;
@@ -190,22 +301,28 @@ function normalizeHeaders(
 function parseCsv(
   buffer: Buffer,
 ): DatasetRecord[] {
-  return parse(buffer, {
-    columns: true,
-    skip_empty_lines: true,
-    bom: true,
-    trim: true,
-  }) as DatasetRecord[];
+  return parse(
+    buffer,
+    {
+      columns: true,
+      skip_empty_lines: true,
+      bom: true,
+      trim: true,
+    },
+  ) as DatasetRecord[];
 }
 
 function parseExcel(
   buffer: Buffer,
 ): DatasetRecord[] {
   const workbook =
-    XLSX.read(buffer, {
-      type: 'buffer',
-      cellDates: true,
-    });
+    XLSX.read(
+      buffer,
+      {
+        type: 'buffer',
+        cellDates: true,
+      },
+    );
 
   const firstSheetName =
     workbook.SheetNames[0];
@@ -217,7 +334,9 @@ function parseExcel(
   }
 
   const worksheet =
-    workbook.Sheets[firstSheetName];
+    workbook.Sheets[
+      firstSheetName
+    ];
 
   if (!worksheet) {
     throw new Error(
@@ -236,11 +355,16 @@ function parseExcel(
     ) as unknown[][];
 
   const nonEmptyRows =
-    matrix.filter((row) =>
-      row.some(isMeaningfulValue),
+    matrix.filter(
+      (row) =>
+        row.some(
+          isMeaningfulValue,
+        ),
     );
 
-  if (nonEmptyRows.length === 0) {
+  if (
+    nonEmptyRows.length === 0
+  ) {
     return [];
   }
 
@@ -254,12 +378,12 @@ function parseExcel(
     Math.max(
       headerRow.length,
       ...dataRows.map(
-        (row) => row.length,
+        (row) =>
+          row.length,
       ),
     );
 
-  const activeColumnIndexes: number[] =
-    [];
+  const activeColumnIndexes: number[] = [];
 
   for (
     let index = 0;
@@ -275,13 +399,17 @@ function parseExcel(
       );
 
     const hasData =
-      dataRows.some((row) =>
-        isMeaningfulValue(
-          row[index],
-        ),
+      dataRows.some(
+        (row) =>
+          isMeaningfulValue(
+            row[index],
+          ),
       );
 
-    if (hasHeader || hasData) {
+    if (
+      hasHeader ||
+      hasData
+    ) {
       activeColumnIndexes.push(
         index,
       );
@@ -301,32 +429,42 @@ function parseExcel(
     );
 
   const headers =
-    normalizeHeaders(rawHeaders);
+    normalizeHeaders(
+      rawHeaders,
+    );
 
   return dataRows
-    .filter((row) =>
-      activeColumnIndexes.some(
-        (index) =>
-          isMeaningfulValue(
-            row[index],
-          ),
-      ),
+    .filter(
+      (row) =>
+        activeColumnIndexes.some(
+          (index) =>
+            isMeaningfulValue(
+              row[index],
+            ),
+        ),
     )
-    .map((row) => {
-      const record: DatasetRecord =
-        {};
+    .map(
+      (row) => {
+        const record:
+          DatasetRecord = {};
 
-      activeColumnIndexes.forEach(
-        (columnIndex, index) => {
-          record[headers[index]!] =
-            String(
-              row[columnIndex] ?? '',
+        activeColumnIndexes.forEach(
+          (
+            columnIndex,
+            index,
+          ) => {
+            record[
+              headers[index]!
+            ] = String(
+              row[columnIndex] ??
+                '',
             ).trim();
-        },
-      );
+          },
+        );
 
-      return record;
-    });
+        return record;
+      },
+    );
 }
 
 function parseDataset(
@@ -341,11 +479,17 @@ function parseDataset(
     originalFilename.toLowerCase();
 
   const isCsv =
-    normalizedType.includes('csv') ||
-    normalizedFilename.endsWith('.csv');
+    normalizedType.includes(
+      'csv',
+    ) ||
+    normalizedFilename.endsWith(
+      '.csv',
+    );
 
   if (isCsv) {
-    return parseCsv(buffer);
+    return parseCsv(
+      buffer,
+    );
   }
 
   const isExcel =
@@ -355,11 +499,17 @@ function parseDataset(
     normalizedType.includes(
       'ms-excel',
     ) ||
-    normalizedFilename.endsWith('.xlsx') ||
-    normalizedFilename.endsWith('.xls');
+    normalizedFilename.endsWith(
+      '.xlsx',
+    ) ||
+    normalizedFilename.endsWith(
+      '.xls',
+    );
 
   if (isExcel) {
-    return parseExcel(buffer);
+    return parseExcel(
+      buffer,
+    );
   }
 
   throw new Error(
@@ -452,7 +602,9 @@ function escapeCsvValue(
     String(value ?? '');
 
   if (
-    /[",\r\n]/.test(text)
+    /[",\r\n]/.test(
+      text,
+    )
   ) {
     return `"${text.replace(
       /"/g,
@@ -469,18 +621,24 @@ function recordsToCsv(
 ): string {
   const header =
     columnNames
-      .map(escapeCsvValue)
+      .map(
+        escapeCsvValue,
+      )
       .join(',');
 
   const rows =
-    records.map((record) =>
-      columnNames
-        .map((columnName) =>
-          escapeCsvValue(
-            record[columnName] ?? '',
-          ),
-        )
-        .join(','),
+    records.map(
+      (record) =>
+        columnNames
+          .map(
+            (columnName) =>
+              escapeCsvValue(
+                record[
+                  columnName
+                ] ?? '',
+              ),
+          )
+          .join(','),
     );
 
   return [
@@ -511,13 +669,17 @@ async function generateParquet(
   records: DatasetRecord[],
   columnNames: string[],
 ): Promise<Buffer> {
-  if (columnNames.length === 0) {
+  if (
+    columnNames.length === 0
+  ) {
     throw new Error(
       'Dataset contains no columns',
     );
   }
 
-  if (records.length === 0) {
+  if (
+    records.length === 0
+  ) {
     throw new Error(
       'Dataset contains no data rows',
     );
@@ -619,18 +781,16 @@ async function generateParquet(
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                           Dataset ingestion                                */
+/* -------------------------------------------------------------------------- */
+
 async function processDataset(
+  dataSource: DataSource,
   datasetId: string,
   workspaceId: string,
+  job?: Job,
 ) {
-  if (!dataSource.isInitialized) {
-    await dataSource.initialize();
-
-    console.log(
-      '[dataset_ingestion] Database connection initialized',
-    );
-  }
-
   const datasetRepository =
     dataSource.getRepository(
       Dataset,
@@ -656,6 +816,13 @@ async function processDataset(
   }
 
   try {
+    if (job) {
+      await updateProgress(
+        job,
+        5,
+      );
+    }
+
     await datasetRepository.update(
       {
         id: dataset.id,
@@ -679,6 +846,13 @@ async function processDataset(
     console.log(
       `[dataset_ingestion] Downloaded ${buffer.length} bytes`,
     );
+
+    if (job) {
+      await updateProgress(
+        job,
+        20,
+      );
+    }
 
     const records =
       parseDataset(
@@ -706,6 +880,13 @@ async function processDataset(
       '[dataset_ingestion] Column names:',
       columnNames,
     );
+
+    if (job) {
+      await updateProgress(
+        job,
+        40,
+      );
+    }
 
     await columnRepository.delete({
       datasetId:
@@ -750,27 +931,30 @@ async function processDataset(
           return columnRepository.create({
             datasetId:
               dataset.id,
-
             name: columnName,
-
             dataType,
-
             ordinalPosition:
               index,
-
             nullable:
               nullCount > 0,
-
             nullCount,
-
             distinctCount,
           });
         },
       );
 
-    if (columns.length > 0) {
+    if (
+      columns.length > 0
+    ) {
       await columnRepository.save(
         columns,
+      );
+    }
+
+    if (job) {
+      await updateProgress(
+        job,
+        55,
       );
     }
 
@@ -788,6 +972,13 @@ async function processDataset(
       `[dataset_ingestion] Generated Parquet: ${parquetBuffer.length} bytes`,
     );
 
+    if (job) {
+      await updateProgress(
+        job,
+        75,
+      );
+    }
+
     const queryObjectKey =
       `workspaces/${workspaceId}/datasets/${dataset.id}/query.parquet`;
 
@@ -800,6 +991,13 @@ async function processDataset(
     console.log(
       `[dataset_ingestion] Uploaded query object: ${queryObjectKey}`,
     );
+
+    if (job) {
+      await updateProgress(
+        job,
+        90,
+      );
+    }
 
     await datasetRepository.update(
       {
@@ -819,6 +1017,13 @@ async function processDataset(
         status: 'ready',
       },
     );
+
+    if (job) {
+      await updateProgress(
+        job,
+        100,
+      );
+    }
 
     console.log(
       `[dataset_ingestion] Dataset ${dataset.id} is ready`,
@@ -857,120 +1062,683 @@ async function processDataset(
   }
 }
 
-const analysisWorker = new Worker(
-  'analysis',
-  async (job) => {
-    console.log(
-      `[analysis] Processing job ${job.id}`,
-    );
+/* -------------------------------------------------------------------------- */
+/*                                Queues                                      */
+/* -------------------------------------------------------------------------- */
 
-    console.log(
-      '[analysis] Job data:',
-      job.data,
-    );
-
-    return {
-      success: true,
-    };
-  },
-  {
-    connection:
-      redisConnection,
-  },
-);
-
-const datasetIngestionWorker =
-  new Worker(
-    'dataset_ingestion',
-    async (job) => {
-      const {
-        datasetId,
-        workspaceId,
-      } = job.data as {
-        datasetId: string;
-        workspaceId: string;
-      };
-
-      console.log(
-        `[dataset_ingestion] Processing job ${job.id}`,
-      );
-
-      const result =
-        await processDataset(
-          datasetId,
-          workspaceId,
-        );
-
-      return result;
-    },
+const analysisQueue =
+  new Queue(
+    'analysis',
     {
       connection:
         redisConnection,
     },
   );
 
-analysisWorker.on(
-  'completed',
-  (job) => {
-    console.log(
-      `[analysis] Job ${job.id} completed`,
-    );
-  },
-);
+const datasetIngestionQueue =
+  new Queue(
+    'dataset_ingestion',
+    {
+      connection:
+        redisConnection,
+    },
+  );
 
-analysisWorker.on(
-  'failed',
-  (job, error) => {
+/* -------------------------------------------------------------------------- */
+/*                         Runtime state                                      */
+/* -------------------------------------------------------------------------- */
+
+let applicationContext:
+  INestApplicationContext | null =
+  null;
+
+let analysisWorker:
+  Worker<AnalysisJobData> | null =
+  null;
+
+let datasetIngestionWorker:
+  Worker | null =
+  null;
+
+let cleanupTimer:
+  ReturnType<typeof setInterval> | null =
+  null;
+
+let shuttingDown = false;
+
+/* -------------------------------------------------------------------------- */
+/*                          Error classification                               */
+/* -------------------------------------------------------------------------- */
+
+function getErrorMessage(
+  error: unknown,
+): string {
+  if (
+    error instanceof Error
+  ) {
+    return error.message.slice(
+      0,
+      4000,
+    );
+  }
+
+  return String(
+    error,
+  ).slice(
+    0,
+    4000,
+  );
+}
+
+function isClientError(
+  error: unknown,
+): boolean {
+  if (
+    typeof error !== 'object' ||
+    error === null
+  ) {
+    return false;
+  }
+
+  const candidate =
+    error as {
+      getStatus?: () => number;
+      status?: number;
+      statusCode?: number;
+    };
+
+  if (
+    typeof candidate.getStatus ===
+    'function'
+  ) {
+    const status =
+      candidate.getStatus();
+
+    return (
+      status >= 400 &&
+      status < 500
+    );
+  }
+
+  const status =
+    candidate.status ??
+    candidate.statusCode;
+
+  return (
+    typeof status ===
+      'number' &&
+    status >= 400 &&
+    status < 500
+  );
+}
+
+function toWorkerError(
+  error: unknown,
+): Error {
+  if (
+    error instanceof UnrecoverableError
+  ) {
+    return error;
+  }
+
+  if (
+    isClientError(error)
+  ) {
+    return new UnrecoverableError(
+      getErrorMessage(
+        error,
+      ),
+    );
+  }
+
+  if (
+    error instanceof Error
+  ) {
+    return error;
+  }
+
+  return new Error(
+    getErrorMessage(
+      error,
+    ),
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            Job cleanup                                     */
+/* -------------------------------------------------------------------------- */
+
+async function cleanupQueue(
+  queue: Queue,
+  queueName: string,
+): Promise<void> {
+  try {
+    const completedRemoved =
+      await queue.clean(
+        completedJobCleanupGraceMs,
+        1000,
+        'completed',
+      );
+
+    const failedRemoved =
+      await queue.clean(
+        failedJobCleanupGraceMs,
+        1000,
+        'failed',
+      );
+
+    if (
+      completedRemoved.length > 0 ||
+      failedRemoved.length > 0
+    ) {
+      console.log(
+        `[${queueName}] Cleanup removed ${completedRemoved.length} completed and ${failedRemoved.length} failed jobs`,
+      );
+    }
+  } catch (error) {
     console.error(
-      `[analysis] Job ${job?.id} failed:`,
+      `[${queueName}] Job cleanup failed:`,
       error,
     );
+  }
+}
+
+async function runCleanup(): Promise<void> {
+  await cleanupQueue(
+    analysisQueue,
+    'analysis',
+  );
+
+  await cleanupQueue(
+    datasetIngestionQueue,
+    'dataset_ingestion',
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Worker event handlers                               */
+/* -------------------------------------------------------------------------- */
+
+function registerAnalysisWorkerEvents(
+  worker: Worker<AnalysisJobData>,
+): void {
+  worker.on(
+    'active',
+    (job) => {
+      console.log(
+        `[analysis] Job ${job.id} is active`,
+      );
+    },
+  );
+
+  worker.on(
+    'completed',
+    (job) => {
+      console.log(
+        `[analysis] Job ${job.id} completed`,
+      );
+    },
+  );
+
+  worker.on(
+    'failed',
+    (job, error) => {
+      console.error(
+        `[analysis] Job ${job?.id} failed:`,
+        error,
+      );
+    },
+  );
+
+  worker.on(
+    'stalled',
+    (jobId) => {
+      console.warn(
+        `[analysis] Job ${jobId} stalled and will be retried by BullMQ`,
+      );
+    },
+  );
+
+  worker.on(
+    'error',
+    (error) => {
+      console.error(
+        '[analysis] Worker error:',
+        error,
+      );
+    },
+  );
+}
+
+function registerDatasetIngestionWorkerEvents(
+  worker: Worker,
+): void {
+  worker.on(
+    'active',
+    (job) => {
+      console.log(
+        `[dataset_ingestion] Job ${job.id} is active`,
+      );
+    },
+  );
+
+  worker.on(
+    'completed',
+    (job) => {
+      console.log(
+        `[dataset_ingestion] Job ${job.id} completed`,
+      );
+    },
+  );
+
+  worker.on(
+    'failed',
+    (job, error) => {
+      console.error(
+        `[dataset_ingestion] Job ${job?.id} failed:`,
+        error,
+      );
+    },
+  );
+
+  worker.on(
+    'stalled',
+    (jobId) => {
+      console.warn(
+        `[dataset_ingestion] Job ${jobId} stalled and will be retried by BullMQ`,
+      );
+    },
+  );
+
+  worker.on(
+    'error',
+    (error) => {
+      console.error(
+        '[dataset_ingestion] Worker error:',
+        error,
+      );
+    },
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                          Worker startup                                    */
+/* -------------------------------------------------------------------------- */
+
+async function bootstrapWorkers(): Promise<void> {
+  applicationContext =
+    await NestFactory.createApplicationContext(
+      AppModule,
+    );
+
+  const dataSource =
+    applicationContext.get(
+      DataSource,
+    );
+
+  const queryService =
+    applicationContext.get(
+      QueryService,
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * The analysis queue is now backed by the real NestJS QueryService.
+   *
+   * This replaces the previous placeholder processor and makes
+   * processAnalysisJob() the actual execution boundary for:
+   *
+   * - SQL jobs
+   * - natural-language jobs
+   * - multi-dataset SQL jobs
+   * - multi-dataset natural-language jobs
+   *
+   * BullMQ handles the queue lifecycle and retry behavior.
+   */
+  analysisWorker =
+    new Worker<AnalysisJobData>(
+      'analysis',
+      async (job) => {
+        console.log(
+          `[analysis] Processing job ${job.id}`,
+        );
+
+        console.log(
+          '[analysis] Job data:',
+          job.data,
+        );
+
+        await updateProgress(
+          job,
+          {
+            stage: 'started',
+            percent: 0,
+          },
+        );
+
+        try {
+          const result =
+            await withTimeout(
+              queryService.processAnalysisJob(
+                job,
+              ),
+              analysisJobTimeoutMs,
+              `Analysis job ${job.id} timed out after ${analysisJobTimeoutMs}ms`,
+            );
+
+          await updateProgress(
+            job,
+            {
+              stage: 'completed',
+              percent: 100,
+            },
+          );
+
+          return result;
+        } catch (error) {
+          const workerError =
+            toWorkerError(
+              error,
+            );
+
+          await updateProgress(
+            job,
+            {
+              stage: 'failed',
+              percent: 100,
+            },
+          );
+
+          throw workerError;
+        }
+      },
+      {
+        connection:
+          redisConnection,
+
+        concurrency:
+          analysisConcurrency,
+
+        lockDuration:
+          lockDurationMs,
+
+        stalledInterval:
+          stalledIntervalMs,
+
+        maxStalledCount,
+      },
+    );
+
+  registerAnalysisWorkerEvents(
+    analysisWorker,
+  );
+
+  /*
+   * Dataset ingestion remains a separate queue and worker.
+   *
+   * The Nest application context now owns the TypeORM DataSource,
+   * so the worker no longer creates a second independent database
+   * connection pool for ingestion.
+   */
+  datasetIngestionWorker =
+    new Worker(
+      'dataset_ingestion',
+      async (job) => {
+        const {
+          datasetId,
+          workspaceId,
+        } =
+          job.data as {
+            datasetId?: string;
+            workspaceId?: string;
+          };
+
+        console.log(
+          `[dataset_ingestion] Processing job ${job.id}`,
+        );
+
+        if (
+          !datasetId ||
+          !workspaceId
+        ) {
+          throw new UnrecoverableError(
+            'Dataset ingestion job is missing datasetId or workspaceId',
+          );
+        }
+
+        try {
+          return await withTimeout(
+            processDataset(
+              dataSource,
+              datasetId,
+              workspaceId,
+              job,
+            ),
+            datasetIngestionJobTimeoutMs,
+            `Dataset ingestion job ${job.id} timed out after ${datasetIngestionJobTimeoutMs}ms`,
+          );
+        } catch (error) {
+          throw toWorkerError(
+            error,
+          );
+        }
+      },
+      {
+        connection:
+          redisConnection,
+
+        concurrency:
+          datasetIngestionConcurrency,
+
+        lockDuration:
+          lockDurationMs,
+
+        stalledInterval:
+          stalledIntervalMs,
+
+        maxStalledCount,
+      },
+    );
+
+  registerDatasetIngestionWorkerEvents(
+    datasetIngestionWorker,
+  );
+
+  cleanupTimer =
+    setInterval(
+      () => {
+        void runCleanup();
+      },
+      cleanupIntervalMs,
+    );
+
+  await runCleanup();
+
+  console.log(
+    'Analysis worker started',
+  );
+
+  console.log(
+    `Analysis worker concurrency: ${analysisConcurrency}`,
+  );
+
+  console.log(
+    `Analysis job timeout: ${analysisJobTimeoutMs}ms`,
+  );
+
+  console.log(
+    'Dataset ingestion worker started',
+  );
+
+  console.log(
+    `Dataset ingestion worker concurrency: ${datasetIngestionConcurrency}`,
+  );
+
+  console.log(
+    `Dataset ingestion job timeout: ${datasetIngestionJobTimeoutMs}ms`,
+  );
+
+  console.log(
+    `BullMQ cleanup interval: ${cleanupIntervalMs}ms`,
+  );
+
+  console.log(
+    `BullMQ completed-job grace: ${completedJobCleanupGraceMs}ms`,
+  );
+
+  console.log(
+    `BullMQ failed-job grace: ${failedJobCleanupGraceMs}ms`,
+  );
+
+  console.log(
+    `BullMQ stalled interval: ${stalledIntervalMs}ms`,
+  );
+
+  console.log(
+    `BullMQ max stalled count: ${maxStalledCount}`,
+  );
+
+  console.log(
+    `BullMQ lock duration: ${lockDurationMs}ms`,
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Graceful shutdown                                  */
+/* -------------------------------------------------------------------------- */
+
+async function shutdown(
+  signal: string,
+): Promise<void> {
+  if (shuttingDown) {
+    return;
+  }
+
+  shuttingDown = true;
+
+  console.log(
+    `Received ${signal}. Shutting down workers...`,
+  );
+
+  if (cleanupTimer) {
+    clearInterval(
+      cleanupTimer,
+    );
+
+    cleanupTimer = null;
+  }
+
+  try {
+    const workers =
+      [
+        analysisWorker,
+        datasetIngestionWorker,
+      ].filter(
+        (
+          worker,
+        ): worker is
+          Worker =>
+          worker !== null,
+      );
+
+    if (workers.length > 0) {
+      await Promise.all(
+        workers.map(
+          (worker) =>
+            worker.close(),
+        ),
+      );
+    }
+
+    await Promise.all([
+      analysisQueue.close(),
+      datasetIngestionQueue.close(),
+    ]);
+
+    if (applicationContext) {
+      await applicationContext.close();
+      applicationContext = null;
+    }
+
+    console.log(
+      'Workers shut down cleanly',
+    );
+  } catch (error) {
+    console.error(
+      'Worker shutdown failed:',
+      error,
+    );
+
+    process.exitCode = 1;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                         Process signal handlers                            */
+/* -------------------------------------------------------------------------- */
+
+process.once(
+  'SIGINT',
+  () => {
+    void shutdown(
+      'SIGINT',
+    );
   },
 );
 
-analysisWorker.on(
-  'error',
+process.once(
+  'SIGTERM',
+  () => {
+    void shutdown(
+      'SIGTERM',
+    );
+  },
+);
+
+process.once(
+  'uncaughtException',
   (error) => {
     console.error(
-      '[analysis] Worker error:',
+      'Uncaught exception in worker process:',
       error,
     );
-  },
-);
 
-datasetIngestionWorker.on(
-  'completed',
-  (job) => {
-    console.log(
-      `[dataset_ingestion] Job ${job.id} completed`,
+    void shutdown(
+      'uncaughtException',
     );
   },
 );
 
-datasetIngestionWorker.on(
-  'failed',
-  (job, error) => {
+process.once(
+  'unhandledRejection',
+  (reason) => {
     console.error(
-      `[dataset_ingestion] Job ${job?.id} failed:`,
-      error,
+      'Unhandled rejection in worker process:',
+      reason,
+    );
+
+    void shutdown(
+      'unhandledRejection',
     );
   },
 );
 
-datasetIngestionWorker.on(
-  'error',
-  (error) => {
-    console.error(
-      '[dataset_ingestion] Worker error:',
-      error,
-    );
-  },
-);
+/* -------------------------------------------------------------------------- */
+/*                                Startup                                     */
+/* -------------------------------------------------------------------------- */
 
-console.log(
-  'Analysis worker started',
-);
+try {
+  await bootstrapWorkers();
+} catch (error) {
+  console.error(
+    'Worker startup failed:',
+    error,
+  );
 
-console.log(
-  'Dataset ingestion worker started',
-);
+  await shutdown(
+    'startup-failure',
+  );
+
+  process.exitCode = 1;
+}

@@ -24,6 +24,7 @@ import {
 } from "../../../lib/query-api";
 import ResultVisualization from "../../../components/query/ResultVisualization";
 import SqlExplanation from "../../../components/query/SqlExplanation";
+import AIInsights from "../../../components/query/AIInsights";
 
 type Theme = "dark" | "light";
 
@@ -55,13 +56,6 @@ interface SqlProblem {
   endLine: number;
   endColumn: number;
   severity: "error" | "warning";
-}
-
-interface SqlValidationResponse {
-  valid: boolean;
-  message: string | null;
-  line: number | null;
-  column: number | null;
 }
 
 interface SqlValidationTarget {
@@ -106,8 +100,15 @@ const DEFAULT_SQL = `SELECT *
 FROM dataset
 LIMIT 100`;
 
+const DEFAULT_MULTI_SQL = `SELECT *
+FROM {{MULTI_DATASET_RELATION}}
+LIMIT 100`;
+
 const DEFAULT_QUESTION =
   "Show me a summary of this dataset";
+
+const MULTI_DATASET_STORAGE_KEY =
+  "ai-data-analyst-selected-datasets";
 
 const SQL_KEYWORDS = [
   "SELECT",
@@ -246,7 +247,7 @@ const SQL_FUNCTIONS = [
  * on every editor value change.
  *
  * Semantic validation remains backend-owned because the
- * backend has the real uploaded dataset and DuckDB engine.
+ * backend has the real uploaded datasets and DuckDB engine.
  */
 const sqlParser = new Parser();
 
@@ -322,8 +323,31 @@ function SparkleIcon({
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="m12 3-1.2 5.1L6 9.5l4.8 1.4L12 16l1.2-5.1L18 9.5l-4.8-1.4L12 3Z" />
-      <path d="m19 15-.6 2.4L16 18l2.4.6L19 21l.6-2.4L22 18l-2.4-.6Z" />
+      <path d="m12 3-1.2 5.1L6 9.5l4.8 1.4L12 16l1.2-5.1L18 9.5l-4.8-1.4Z" />
+      <path d="m19 15-.6 2.4L16 18l2.4.6L19 21l.6-2.4Z" />
+    </svg>
+  );
+}
+
+function LayersIcon({
+  className = "h-4 w-4",
+}: {
+  className?: string;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="m12 3 8 4.5-8 4.5-8-4.5L12 3Z" />
+      <path d="m4 12 8 4.5 8-4.5" />
+      <path d="m4 16.5 8 4.5 8-4.5" />
     </svg>
   );
 }
@@ -343,6 +367,24 @@ function createConversationId() {
   return `${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 10)}`;
+}
+
+function areStringArraysEqual(
+  left: string[],
+  right: string[],
+) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every(
+    (value, index) =>
+      value === right[index],
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
 }
 
 function getLineColumnFromIndex(
@@ -663,13 +705,6 @@ function normalizeParserError(
   };
 }
 
-/*
- * Real client-side syntax validation.
- *
- * IMPORTANT:
- * This intentionally does not try to decide whether a table
- * or column exists. That is the backend semantic validator's job.
- */
 function validateSqlSyntax(
   value: string,
 ): SqlProblem[] {
@@ -715,12 +750,6 @@ function validateSqlSyntax(
   }
 
   try {
-    /*
-     * BigQuery grammar is used deliberately for the
-     * user-facing syntax layer.
-     *
-     * The actual dataset engine remains DuckDB on backend.
-     */
     sqlParser.astify(sql, {
       database: "BigQuery",
       parseOptions: {
@@ -756,10 +785,6 @@ function validateSqlSyntax(
           normalized.column,
         );
     } else {
-      /*
-       * Parser errors that do not expose a location are
-       * most commonly end-of-input errors.
-       */
       index = Math.max(
         value.length - 1,
         0,
@@ -800,7 +825,7 @@ export default function QueryWorkspacePage() {
 
   const [activeTab, setActiveTab] =
     useState<
-      "result" | "explanation" | "visualization"
+      "result" | "explanation" | "visualization" | "insights"
     >("result");
 
   const [datasetId, setDatasetId] =
@@ -817,6 +842,26 @@ export default function QueryWorkspacePage() {
 
   const [context, setContext] =
     useState<DatasetContext | null>(null);
+
+  const [multiMode, setMultiMode] =
+    useState(false);
+
+  const [
+    selectedDatasetIds,
+    setSelectedDatasetIds,
+  ] = useState<string[]>([]);
+
+  const [
+    multiContexts,
+    setMultiContexts,
+  ] = useState<
+    Record<string, DatasetContext>
+  >({});
+
+  const [
+    loadingMultiContexts,
+    setLoadingMultiContexts,
+  ] = useState(false);
 
   const [conversationId, setConversationId] =
     useState<string>("");
@@ -854,19 +899,9 @@ export default function QueryWorkspacePage() {
       null,
     );
 
-  /*
-   * Each editor value gets a new validation
-   * sequence. Older results cannot win races.
-   */
   const validationRequestRef =
     useRef(0);
 
-  /*
-   * onChange/onMount may be attached to an editor
-   * instance created during an older render.
-   *
-   * Refs keep the current validation context alive.
-   */
   const scheduleSqlValidationRef =
     useRef<(value: string) => void>(
       () => {},
@@ -878,10 +913,16 @@ export default function QueryWorkspacePage() {
   const datasetIdValidationRef =
     useRef("");
 
+  const selectedDatasetIdsValidationRef =
+    useRef<string[]>([]);
+
   const queryReadyValidationRef =
     useRef(false);
 
-  const [sqlProblems, setSqlProblems] =
+  const [
+    sqlProblems,
+    setSqlProblems,
+  ] =
     useState<SqlProblem[]>([]);
 
   const [
@@ -921,6 +962,9 @@ export default function QueryWorkspacePage() {
 
   const columnNamesRef =
     useRef<string[]>([]);
+
+  const multiColumnNamesRef =
+    useRef<Record<string, string[]>>({});
 
   const queryReadyRef =
     useRef(false);
@@ -1039,10 +1083,14 @@ export default function QueryWorkspacePage() {
   }
 
   // ==========================================
-  // URL PARAMS
+  // URL + MULTI DATASET CONTEXT
   // ==========================================
 
   useEffect(() => {
+    if (!mounted) {
+      return;
+    }
+
     const params =
       new URLSearchParams(
         window.location.search,
@@ -1051,10 +1099,65 @@ export default function QueryWorkspacePage() {
     const id =
       params.get("datasetId") ?? "";
 
-    setDatasetId(id);
+    const mode =
+      params.get("mode") ?? "";
+
+    const nextIsMulti =
+      mode === "multi";
+
+    let storedDatasetIds: string[] = [];
+
+    if (nextIsMulti) {
+      try {
+        const raw =
+          window.sessionStorage.getItem(
+            MULTI_DATASET_STORAGE_KEY,
+          );
+
+        const parsed: unknown =
+          raw ? JSON.parse(raw) : [];
+
+        if (Array.isArray(parsed)) {
+          storedDatasetIds =
+            parsed.filter(
+              (
+                value,
+              ): value is string =>
+                typeof value ===
+                  "string" &&
+                value.trim()
+                  .length > 0,
+            );
+        }
+      } catch {
+        storedDatasetIds = [];
+      }
+    }
+
+    setMultiMode(
+      nextIsMulti,
+    );
+
+    setSelectedDatasetIds(
+      storedDatasetIds,
+    );
+
+    setDatasetId(
+      id,
+    );
+
+    if (nextIsMulti) {
+      setSql(DEFAULT_MULTI_SQL);
+    } else {
+      setSql(DEFAULT_SQL);
+    }
+
     datasetIdValidationRef.current =
       id;
-  }, []);
+
+    selectedDatasetIdsValidationRef.current =
+      storedDatasetIds;
+  }, [mounted]);
 
   // ==========================================
   // LOAD WORKSPACE
@@ -1212,6 +1315,95 @@ export default function QueryWorkspacePage() {
 
         setDatasets(datasetList);
 
+        if (multiMode) {
+          const readySelectedIds =
+            selectedDatasetIds.filter(
+              (selectedId) =>
+                datasetList.some(
+                  (item) =>
+                    item.id ===
+                      selectedId &&
+                    item.status ===
+                      "ready",
+                ),
+            );
+
+          if (
+            !areStringArraysEqual(
+              readySelectedIds,
+              selectedDatasetIds,
+            )
+          ) {
+            setSelectedDatasetIds(
+              readySelectedIds,
+            );
+          }
+
+          selectedDatasetIdsValidationRef.current =
+            readySelectedIds;
+
+          const firstSelected =
+            datasetList.find(
+              (item) =>
+                readySelectedIds.includes(
+                  item.id,
+                ),
+            ) ?? null;
+
+          if (!firstSelected) {
+            setDatasetId("");
+            datasetIdValidationRef.current =
+              "";
+
+            setDataset(null);
+            setContext(null);
+            setResult(null);
+
+            queryReadyValidationRef.current =
+              false;
+
+            setSqlProblems([]);
+            setSqlValidationPending(
+              false,
+            );
+            setSqlValidationState(
+              "idle",
+            );
+
+            setInfo(
+              "Select at least two ready datasets from the dashboard to start a combined analysis.",
+            );
+
+            return;
+          }
+
+          setDatasetId(
+            firstSelected.id,
+          );
+
+          datasetIdValidationRef.current =
+            firstSelected.id;
+
+          setDataset(
+            firstSelected,
+          );
+
+          setResult(null);
+
+          queryReadyValidationRef.current =
+            false;
+
+          setSqlProblems([]);
+          setSqlValidationPending(
+            false,
+          );
+          setSqlValidationState(
+            "idle",
+          );
+
+          return;
+        }
+
         const params =
           new URLSearchParams(
             window.location.search,
@@ -1331,10 +1523,377 @@ export default function QueryWorkspacePage() {
     return () => {
       active = false;
     };
-  }, [workspace]);
+  }, [
+    workspace,
+    multiMode,
+    selectedDatasetIds,
+  ]);
 
   // ==========================================
-  // LOAD DATASET CONTEXT
+  // SELECTED MULTI DATASETS
+  // ==========================================
+
+  const selectedDatasets =
+    useMemo(
+      () =>
+        datasets.filter((item) =>
+          selectedDatasetIds.includes(
+            item.id,
+          ),
+        ),
+      [
+        datasets,
+        selectedDatasetIds,
+      ],
+    );
+
+  const selectedReadyDatasets =
+    useMemo(
+      () =>
+        selectedDatasets.filter(
+          (item) =>
+            item.status === "ready",
+        ),
+      [selectedDatasets],
+    );
+
+  const multiRelationNames =
+    useMemo(
+      () =>
+        selectedReadyDatasets.map(
+          (item, index) => ({
+            id: item.id,
+            displayName:
+              item.name.trim() ||
+              `Dataset ${index + 1}`,
+            backendRelation:
+              `dataset_${index + 1}`,
+          }),
+        ),
+      [selectedReadyDatasets],
+    );
+
+  function quoteSqlIdentifier(
+    value: string,
+  ) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+
+  function getMultiRelationName(
+    datasetIdValue: string,
+  ) {
+    return (
+      multiRelationNames.find(
+        (relation) =>
+          relation.id ===
+          datasetIdValue,
+      )?.displayName ?? ""
+    );
+  }
+
+  function toDisplayMultiSql(
+    value: string,
+  ) {
+    if (!multiMode) {
+      return value;
+    }
+
+    return multiRelationNames.reduce(
+      (currentSql, relation) =>
+        currentSql.replace(
+          new RegExp(
+            `\\b${escapeRegExp(
+              relation.backendRelation,
+            )}\\b`,
+            "g",
+          ),
+          quoteSqlIdentifier(
+            relation.displayName,
+          ),
+        ),
+      value,
+    );
+  }
+
+  function toBackendMultiSql(
+    value: string,
+  ) {
+    if (!multiMode) {
+      return value;
+    }
+
+    return multiRelationNames.reduce(
+      (currentSql, relation) => {
+        const quotedName =
+          quoteSqlIdentifier(
+            relation.displayName,
+          );
+
+        let nextSql =
+          currentSql.replace(
+            new RegExp(
+              escapeRegExp(
+                quotedName,
+              ),
+              "g",
+            ),
+            relation.backendRelation,
+          );
+
+        if (
+          /^[A-Za-z_][A-Za-z0-9_]*$/.test(
+            relation.displayName,
+          )
+        ) {
+          nextSql =
+            nextSql.replace(
+              new RegExp(
+                `\\b${escapeRegExp(
+                  relation.displayName,
+                )}\\b`,
+                "g",
+              ),
+              relation.backendRelation,
+            );
+        }
+
+        return nextSql;
+      },
+      value,
+    );
+  }
+
+  function mapMultiBackendPositionToEditor(
+    displayValue: string,
+    backendLine: number,
+    backendColumn: number,
+  ) {
+    if (
+      !multiMode ||
+      backendLine < 1 ||
+      backendColumn < 1
+    ) {
+      return {
+        line: backendLine,
+        column: backendColumn,
+      };
+    }
+
+    const displayLines =
+      displayValue.split("\\n");
+    const backendLines =
+      toBackendMultiSql(displayValue).split(
+        "\\n",
+      );
+
+    const displayLine =
+      displayLines[backendLine - 1] ?? "";
+    const backendLineValue =
+      backendLines[backendLine - 1] ?? "";
+
+    let mappedColumn =
+      Math.max(backendColumn, 1);
+
+    for (
+      const relation of multiRelationNames
+    ) {
+      const alias =
+        relation.backendRelation;
+      const quotedName =
+        quoteSqlIdentifier(
+          relation.displayName,
+        );
+
+      let searchFrom = 0;
+
+      while (true) {
+        const aliasIndex =
+          backendLineValue.indexOf(
+            alias,
+            searchFrom,
+          );
+
+        if (aliasIndex < 0) {
+          break;
+        }
+
+        if (
+          aliasIndex >=
+          backendColumn - 1
+        ) {
+          break;
+        }
+
+        mappedColumn +=
+          quotedName.length -
+          alias.length;
+
+        searchFrom =
+          aliasIndex + alias.length;
+      }
+    }
+
+    return {
+      line: backendLine,
+      column: Math.max(
+        mappedColumn,
+        1,
+      ),
+    };
+  }
+
+  useEffect(() => {
+    selectedDatasetIdsValidationRef.current =
+      selectedReadyDatasets.map(
+        (item) => item.id,
+      );
+  }, [selectedReadyDatasets]);
+
+  useEffect(() => {
+    if (
+      !multiMode ||
+      selectedReadyDatasets.length ===
+        0
+    ) {
+      return;
+    }
+
+    const firstRelation =
+      quoteSqlIdentifier(
+        selectedReadyDatasets[0].name.trim() ||
+          "Dataset 1",
+      );
+
+    setSql((currentSql) => {
+      if (
+        currentSql ===
+        DEFAULT_MULTI_SQL
+      ) {
+        return `SELECT *\nFROM ${firstRelation}\nLIMIT 100`;
+      }
+
+      return currentSql;
+    });
+  }, [
+    multiMode,
+    selectedReadyDatasets,
+  ]);
+
+  useEffect(() => {
+    if (
+      !multiMode ||
+      !workspace ||
+      selectedReadyDatasets.length ===
+        0
+    ) {
+      setMultiContexts({});
+      setLoadingMultiContexts(false);
+      return;
+    }
+
+    const accessTokenValue =
+      getAccessToken();
+
+    const currentWorkspace =
+      workspace;
+
+    if (
+      !accessTokenValue ||
+      !accessTokenValue.trim() ||
+      !currentWorkspace
+    ) {
+      setLoadingMultiContexts(false);
+      return;
+    }
+
+    const accessToken: string =
+      accessTokenValue;
+
+    const workspaceId: string =
+      currentWorkspace.id;
+
+    let active = true;
+
+    async function loadMultiContexts() {
+      try {
+        setLoadingMultiContexts(
+          true,
+        );
+
+        const entries =
+          await Promise.all(
+            selectedReadyDatasets.map(
+              async (item) => {
+                const datasetContext =
+                  await datasetApi.context(
+                    accessToken,
+                    workspaceId,
+                    item.id,
+                  );
+
+                return [
+                  item.id,
+                  datasetContext,
+                ] as const;
+              },
+            ),
+          );
+
+        if (!active) {
+          return;
+        }
+
+        setMultiContexts(
+          Object.fromEntries(entries),
+        );
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+
+        setMultiContexts({});
+
+        if (err instanceof ApiError) {
+          setError(err.message);
+        } else if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError(
+            "Unable to load selected dataset contexts.",
+          );
+        }
+      } finally {
+        if (active) {
+          setLoadingMultiContexts(false);
+        }
+      }
+    }
+
+    void loadMultiContexts();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    multiMode,
+    workspace,
+    selectedReadyDatasets,
+  ]);
+
+  const multiDatasetColumnCount =
+    useMemo(
+      () =>
+        selectedReadyDatasets.reduce(
+          (total, item) =>
+            total +
+            item.columnCount,
+          0,
+        ),
+      [selectedReadyDatasets],
+    );
+
+  // ==========================================
+  // LOAD ACTIVE DATASET CONTEXT
   // ==========================================
 
   useEffect(() => {
@@ -1380,8 +1939,11 @@ export default function QueryWorkspacePage() {
 
       try {
         setLoadingContext(true);
-        setError("");
-        setInfo("");
+
+        if (!multiMode) {
+          setError("");
+          setInfo("");
+        }
 
         setDataset(
           selectedDataset,
@@ -1401,8 +1963,9 @@ export default function QueryWorkspacePage() {
         );
 
         if (
+          !multiMode &&
           selectedDatasetStatus !==
-          "ready"
+            "ready"
         ) {
           setInfo(
             `Dataset status: ${selectedDatasetStatus}. Querying is available after ingestion is ready.`,
@@ -1451,6 +2014,7 @@ export default function QueryWorkspacePage() {
     workspace,
     datasetId,
     datasets,
+    multiMode,
   ]);
 
   // ==========================================
@@ -1468,6 +2032,14 @@ export default function QueryWorkspacePage() {
 
   const suggestedQuestions =
     useMemo(() => {
+      if (multiMode) {
+        return [
+          "Compare the selected datasets",
+          "Find useful relationships across the selected data",
+          "Show the most important metrics across these datasets",
+        ];
+      }
+
       const suggestions = [
         "Show me a summary of this dataset",
         "Show the top 5 rows by the most useful numeric metric",
@@ -1494,7 +2066,10 @@ export default function QueryWorkspacePage() {
       }
 
       return suggestions;
-    }, [columnNames]);
+    }, [
+      columnNames,
+      multiMode,
+    ]);
 
   const followUpQuestions =
     useMemo(() => {
@@ -1523,6 +2098,128 @@ export default function QueryWorkspacePage() {
       columnNames;
   }, [columnNames]);
 
+  useEffect(() => {
+    const nextRelations: Record<
+      string,
+      string[]
+    > = {};
+
+    selectedReadyDatasets.forEach(
+      (item) => {
+        const relation =
+          item.name.trim();
+
+        if (!relation) {
+          return;
+        }
+
+        nextRelations[
+          relation.toLowerCase()
+        ] =
+          multiContexts[item.id]
+            ?.columns?.map(
+              (column) =>
+                column.name,
+            ) ?? [];
+      },
+    );
+
+    multiColumnNamesRef.current =
+      nextRelations;
+  }, [
+    multiContexts,
+    selectedReadyDatasets,
+  ]);
+
+  // ==========================================
+  // MULTI MODE HELPERS
+  // ==========================================
+
+  function exitMultiMode() {
+    const firstReady =
+      selectedReadyDatasets[0];
+
+    window.sessionStorage.removeItem(
+      MULTI_DATASET_STORAGE_KEY,
+    );
+
+    setMultiMode(false);
+    setSelectedDatasetIds([]);
+
+    setSqlProblems([]);
+    setSqlValidationPending(
+      false,
+    );
+    setSqlValidationState(
+      "idle",
+    );
+
+    validationRequestRef.current +=
+      1;
+
+    validationAbortRef.current?.abort();
+    validationAbortRef.current =
+      null;
+
+    if (
+      validationTimerRef.current
+    ) {
+      clearTimeout(
+        validationTimerRef.current,
+      );
+
+      validationTimerRef.current =
+        null;
+    }
+
+    setSql(DEFAULT_SQL);
+    setQuestion(
+      DEFAULT_QUESTION,
+    );
+
+    if (firstReady) {
+      const nextDatasetId =
+        firstReady.id;
+
+      setDatasetId(
+        nextDatasetId,
+      );
+
+      datasetIdValidationRef.current =
+        nextDatasetId;
+
+      queryReadyValidationRef.current =
+        firstReady.status ===
+        "ready";
+
+      window.history.replaceState(
+        null,
+        "",
+        `/dashboard/query?datasetId=${encodeURIComponent(
+          nextDatasetId,
+        )}`,
+      );
+    } else {
+      setDatasetId("");
+      datasetIdValidationRef.current =
+        "";
+
+      queryReadyValidationRef.current =
+        false;
+
+      window.history.replaceState(
+        null,
+        "",
+        "/dashboard/query",
+      );
+    }
+
+    setError("");
+    setInfo("");
+    setResult(null);
+    resetConversation();
+  }
+
   // ==========================================
   // DATASET CHANGE
   // ==========================================
@@ -1530,6 +2227,15 @@ export default function QueryWorkspacePage() {
   function handleDatasetChange(
     nextDatasetId: string,
   ) {
+    if (multiMode) {
+      window.sessionStorage.removeItem(
+        MULTI_DATASET_STORAGE_KEY,
+      );
+
+      setMultiMode(false);
+      setSelectedDatasetIds([]);
+    }
+
     setDatasetId(
       nextDatasetId,
     );
@@ -1539,6 +2245,9 @@ export default function QueryWorkspacePage() {
 
     queryReadyValidationRef.current =
       false;
+
+    selectedDatasetIdsValidationRef.current =
+      [];
 
     setDataset(null);
     setContext(null);
@@ -1617,8 +2326,24 @@ export default function QueryWorkspacePage() {
     !loadingContext &&
     Boolean(dataset);
 
+  const multiContextReady =
+    multiMode &&
+    selectedReadyDatasets.length >=
+      2 &&
+    !loadingDatasets &&
+    !loadingMultiContexts &&
+    selectedReadyDatasets.every(
+      (item) =>
+        Boolean(
+          multiContexts[item.id],
+        ),
+    );
+
   const queryReady =
-    dataset?.status === "ready";
+    multiMode
+      ? multiContextReady
+      : dataset?.status ===
+        "ready";
 
   useEffect(() => {
     queryReadyRef.current =
@@ -1626,7 +2351,9 @@ export default function QueryWorkspacePage() {
 
     queryReadyValidationRef.current =
       queryReady;
-  }, [queryReady]);
+  }, [
+    queryReady,
+  ]);
 
   useEffect(() => {
     workspaceValidationRef.current =
@@ -1637,6 +2364,41 @@ export default function QueryWorkspacePage() {
     datasetIdValidationRef.current =
       datasetId;
   }, [datasetId]);
+
+  useEffect(() => {
+    if (!multiMode) {
+      return;
+    }
+
+    validationRequestRef.current +=
+      1;
+
+    validationAbortRef.current?.abort();
+    validationAbortRef.current =
+      null;
+
+    if (
+      validationTimerRef.current
+    ) {
+      clearTimeout(
+        validationTimerRef.current,
+      );
+
+      validationTimerRef.current =
+        null;
+    }
+
+    setSqlProblems([]);
+    setSqlValidationPending(
+      false,
+    );
+    setSqlValidationState(
+      "idle",
+    );
+  }, [
+    multiMode,
+    selectedDatasetIds.join("|"),
+  ]);
 
   // ==========================================
   // SQL MARKERS
@@ -1726,10 +2488,6 @@ export default function QueryWorkspacePage() {
       return false;
     }
 
-    /*
-     * Syntax parser is authoritative for syntax.
-     * Backend is only reached after syntax passes.
-     */
     const syntaxProblems =
       validateSqlSyntax(value);
 
@@ -1774,9 +2532,11 @@ export default function QueryWorkspacePage() {
     const currentQueryReady =
       queryReadyValidationRef.current;
 
+    const currentMultiDatasetIds =
+      selectedDatasetIdsValidationRef.current;
+
     if (
       !currentWorkspace ||
-      !currentDatasetId ||
       !currentQueryReady ||
       !value.trim()
     ) {
@@ -1786,6 +2546,37 @@ export default function QueryWorkspacePage() {
 
       setSqlValidationState(
         "idle",
+      );
+
+      return false;
+    }
+
+    if (
+      multiMode &&
+      currentMultiDatasetIds.length <
+        2
+    ) {
+      const problem =
+        createSqlProblem(
+          target.editorValue,
+          target.startOffset,
+          "At least two ready datasets are required for combined analysis.",
+        );
+
+      setSqlProblems([
+        problem,
+      ]);
+
+      applySqlMarkers([
+        problem,
+      ]);
+
+      setSqlValidationPending(
+        false,
+      );
+
+      setSqlValidationState(
+        "invalid",
       );
 
       return false;
@@ -1842,11 +2633,95 @@ export default function QueryWorkspacePage() {
       abortController;
 
     try {
-      /*
-       * This endpoint performs the backend dry-run
-       * equivalent against the actual Parquet dataset
-       * through DuckDB without executing the query.
-       */
+      if (multiMode) {
+        const response =
+          await queryApi.validateMultiDatasetSql(
+            {
+              workspaceId:
+                currentWorkspace.id,
+              datasetIds:
+                currentMultiDatasetIds,
+            },
+            toBackendMultiSql(value),
+          );
+
+        if (
+          requestId !==
+          validationRequestRef.current
+        ) {
+          return false;
+        }
+
+        if (
+          response.valid
+        ) {
+          setSqlProblems([]);
+          applySqlMarkers([]);
+          setSqlValidationState(
+            "valid",
+          );
+
+          return true;
+        }
+
+        const message =
+          response.message?.trim() ||
+          "SQL semantic validation failed.";
+
+        const backendLine =
+          typeof response.line ===
+            "number" &&
+          response.line > 0
+            ? response.line
+            : 1;
+
+        const backendColumn =
+          typeof response.column ===
+            "number" &&
+          response.column > 0
+            ? response.column
+            : 1;
+
+        const mappedBackendPosition =
+          mapMultiBackendPositionToEditor(
+            value,
+            backendLine,
+            backendColumn,
+          );
+
+        const problem =
+          mapProblemToEditor(
+            {
+              message,
+              line:
+                mappedBackendPosition.line,
+              column:
+                mappedBackendPosition.column,
+              endLine:
+                backendLine,
+              endColumn:
+                backendColumn +
+                1,
+              severity: "error",
+            },
+            target,
+          );
+
+        setSqlProblems([
+          problem,
+        ]);
+
+        applySqlMarkers([
+          problem,
+        ]);
+
+        setSqlValidationState(
+          "invalid",
+        );
+
+        return false;
+      }
+
       const response =
         await fetch(
           `/backend/workspaces/${encodeURIComponent(
@@ -1965,10 +2840,6 @@ export default function QueryWorkspacePage() {
         return false;
       }
 
-      /*
-       * Never infer validity from a truthy value.
-       * The API MUST explicitly say true.
-       */
       if (
         responseObject?.valid ===
         true
@@ -2046,9 +2917,11 @@ export default function QueryWorkspacePage() {
       }
 
       const message =
-        err instanceof Error
+        err instanceof QueryApiError
           ? `SQL validation unavailable: ${err.message}`
-          : "SQL validation unavailable.";
+          : err instanceof Error
+            ? `SQL validation unavailable: ${err.message}`
+            : "SQL validation unavailable.";
 
       const problem =
         createSqlProblem(
@@ -2068,6 +2941,16 @@ export default function QueryWorkspacePage() {
       setSqlValidationState(
         "invalid",
       );
+
+      if (
+        err instanceof QueryApiError &&
+        (err.status === 401 ||
+          err.status === 403)
+      ) {
+        setError(
+          "Your session is no longer valid. Please log in again.",
+        );
+      }
 
       return false;
     } finally {
@@ -2094,9 +2977,6 @@ export default function QueryWorkspacePage() {
   function scheduleSqlValidation(
     value: string,
   ) {
-    /*
-     * Cancel previous debounce.
-     */
     if (
       validationTimerRef.current
     ) {
@@ -2108,16 +2988,10 @@ export default function QueryWorkspacePage() {
         null;
     }
 
-    /*
-     * Cancel active semantic request.
-     */
     validationAbortRef.current?.abort();
     validationAbortRef.current =
       null;
 
-    /*
-     * New value = new validation sequence.
-     */
     const requestId =
       validationRequestRef.current +
       1;
@@ -2125,11 +2999,6 @@ export default function QueryWorkspacePage() {
     validationRequestRef.current =
       requestId;
 
-    /*
-     * 1. REAL CLIENT-SIDE PARSER
-     *
-     * This happens immediately on every keystroke.
-     */
     const syntaxProblems =
       validateSqlSyntax(value);
 
@@ -2141,10 +3010,6 @@ export default function QueryWorkspacePage() {
       syntaxProblems,
     );
 
-    /*
-     * Syntax errors are immediately invalid.
-     * No backend request is necessary.
-     */
     if (
       syntaxProblems.some(
         (problem) =>
@@ -2172,15 +3037,16 @@ export default function QueryWorkspacePage() {
     const currentQueryReady =
       queryReadyValidationRef.current;
 
-    /*
-     * Syntax is valid even without a dataset.
-     * Semantic checking waits for a real dataset.
-     */
+    const currentMultiDatasetIds =
+      selectedDatasetIdsValidationRef.current;
+
     if (
       !currentWorkspace ||
-      !currentDatasetId ||
       !currentQueryReady ||
-      !value.trim()
+      !value.trim() ||
+      (multiMode &&
+        currentMultiDatasetIds.length <
+          2)
     ) {
       setSqlValidationPending(
         false,
@@ -2193,11 +3059,21 @@ export default function QueryWorkspacePage() {
       return;
     }
 
-    /*
-     * 2. BACKEND SEMANTIC DRY-RUN
-     *
-     * Only after 500ms of no typing.
-     */
+    if (
+      !multiMode &&
+      !currentDatasetId
+    ) {
+      setSqlValidationPending(
+        false,
+      );
+
+      setSqlValidationState(
+        "idle",
+      );
+
+      return;
+    }
+
     setSqlValidationPending(
       true,
     );
@@ -2229,23 +3105,22 @@ export default function QueryWorkspacePage() {
       }, 500);
   }
 
-  /*
-   * IMPORTANT:
-   * Monaco callbacks always use this current function.
-   */
   scheduleSqlValidationRef.current =
     scheduleSqlValidation;
 
-  /*
-   * When workspace/dataset becomes available after
-   * Monaco already mounted, validate the existing editor.
-   */
   useEffect(() => {
     if (
       !queryReady ||
       !workspace ||
-      !datasetId ||
       !sql.trim()
+    ) {
+      return;
+    }
+
+    if (
+      multiMode &&
+      selectedReadyDatasets.length <
+        2
     ) {
       return;
     }
@@ -2259,6 +3134,8 @@ export default function QueryWorkspacePage() {
     queryReady,
     workspace?.id,
     datasetId,
+    multiMode,
+    selectedDatasetIds.join("|"),
   ]);
 
   // ==========================================
@@ -2303,10 +3180,6 @@ export default function QueryWorkspacePage() {
     const selection =
       editorInstance.getSelection();
 
-    /*
-     * BigQuery-like behavior:
-     * if text is selected, only that text runs.
-     */
     if (
       selection &&
       !selection.isEmpty()
@@ -2350,10 +3223,6 @@ export default function QueryWorkspacePage() {
       };
     }
 
-    /*
-     * Nothing selected:
-     * execute the complete editor value.
-     */
     const fullSql =
       fullEditorValue.trim();
 
@@ -2454,139 +3323,107 @@ export default function QueryWorkspacePage() {
         monaco.languages.registerCompletionItemProvider(
           "sql",
           {
-            triggerCharacters: [
-              ".",
-              " ",
-            ],
-
+            triggerCharacters: [".", " "],
             provideCompletionItems: (
               model: editor.ITextModel,
               position: Position,
             ) => {
-              const word =
-                model.getWordUntilPosition(
-                  position,
-                );
+              const word = model.getWordUntilPosition(position);
 
               const range = {
-                startLineNumber:
-                  position.lineNumber,
-
-                endLineNumber:
-                  position.lineNumber,
-
-                startColumn:
-                  word.startColumn,
-
-                endColumn:
-                  word.endColumn,
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn,
               };
 
-              const lineBeforeCursor =
-                model
-                  .getLineContent(
-                    position.lineNumber,
-                  )
-                  .slice(
-                    0,
-                    position.column - 1,
-                  );
+              const lineBeforeCursor = model
+                .getLineContent(position.lineNumber)
+                .slice(0, position.column - 1);
 
-              const dotCompletion =
-                /(?:dataset|\w+)\.\w*$/i.test(
-                  lineBeforeCursor,
-                );
+              // Detect if the user is typing after a dot (e.g. "o." or "orders.")
+              const isDotCompletion = /\.\w*$/i.test(lineBeforeCursor);
 
-              const columnSuggestions =
-                columnNamesRef.current.map(
-                  (
-                    columnName,
-                  ) => ({
-                    label:
-                      columnName,
+              // 1. Clean Column Suggestions (No table prefixes)
+              const columnSuggestions: any[] = [];
+              const seenColumns = new Set<string>();
 
-                    kind:
-                      monaco.languages
-                        .CompletionItemKind
-                        .Field,
-
-                    insertText:
-                      columnName,
-
+              if (Object.keys(multiColumnNamesRef.current).length > 0) {
+                // Multi-dataset mode
+                Object.entries(multiColumnNamesRef.current).forEach(([relation, cols]) => {
+                  cols.forEach((col) => {
+                    if (!seenColumns.has(col)) {
+                      seenColumns.add(col);
+                      columnSuggestions.push({
+                        label: col,
+                        kind: monaco.languages.CompletionItemKind.Field,
+                        insertText: col,
+                        range,
+                        detail: `Column in ${relation}`,
+                        sortText: `1-${col}`,
+                      });
+                    }
+                  });
+                });
+              } else {
+                // Single dataset mode
+                columnNamesRef.current.forEach((col) => {
+                  columnSuggestions.push({
+                    label: col,
+                    kind: monaco.languages.CompletionItemKind.Field,
+                    insertText: col,
                     range,
+                    detail: "Dataset column",
+                    sortText: `1-${col}`,
+                  });
+                });
+              }
 
-                    detail:
-                      "Dataset column",
+              // 2. Table / Dataset Suggestions
+              const tableSuggestions: any[] = [];
+              if (!isDotCompletion) {
+                Object.keys(multiColumnNamesRef.current).forEach((relation) => {
+                  tableSuggestions.push({
+                    label: relation,
+                    kind: monaco.languages.CompletionItemKind.Class,
+                    insertText: relation,
+                    range,
+                    detail: "Dataset Table",
+                    sortText: `0-${relation}`,
+                  });
+                });
+              }
 
-                    sortText:
-                      `1-${columnName}`,
-                  }),
-                );
-
-              if (
-                dotCompletion
-              ) {
+              // If typing after a dot, ONLY show columns (solves alias issue like c.categoryid)
+              if (isDotCompletion) {
                 return {
-                  suggestions:
-                    columnSuggestions,
+                  suggestions: columnSuggestions,
                 };
               }
 
-              const keywordSuggestions =
-                SQL_KEYWORDS.map(
-                  (keyword) => ({
-                    label: keyword,
+              // 3. Keywords & Functions
+              const keywordSuggestions = SQL_KEYWORDS.map((keyword) => ({
+                label: keyword,
+                kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: keyword,
+                range,
+                detail: "SQL keyword",
+                sortText: `2-${keyword}`,
+              }));
 
-                    kind:
-                      monaco.languages
-                        .CompletionItemKind
-                        .Keyword,
-
-                    insertText:
-                      keyword,
-
-                    range,
-
-                    detail:
-                      "SQL keyword",
-
-                    sortText:
-                      `2-${keyword}`,
-                  }),
-                );
-
-              const functionSuggestions =
-                SQL_FUNCTIONS.map(
-                  (
-                    functionName,
-                  ) => ({
-                    label: `${functionName}()`,
-
-                    kind:
-                      monaco.languages
-                        .CompletionItemKind
-                        .Function,
-
-                    insertText:
-                      `${functionName}($0)`,
-
-                    insertTextRules:
-                      monaco.languages
-                        .CompletionItemInsertTextRule
-                        .InsertAsSnippet,
-
-                    range,
-
-                    detail:
-                      "SQL function",
-
-                    sortText:
-                      `3-${functionName}`,
-                  }),
-                );
+              const functionSuggestions = SQL_FUNCTIONS.map((funcName) => ({
+                label: `${funcName}()`,
+                kind: monaco.languages.CompletionItemKind.Function,
+                insertText: `${funcName}($0)`,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                detail: "SQL function",
+                sortText: `3-${funcName}`,
+              }));
 
               return {
                 suggestions: [
+                  ...tableSuggestions,
                   ...columnSuggestions,
                   ...keywordSuggestions,
                   ...functionSuggestions,
@@ -2630,10 +3467,6 @@ export default function QueryWorkspacePage() {
         runEditorQuery,
       );
 
-      /*
-       * Initial validation uses the CURRENT ref,
-       * not the mount-time React closure.
-       */
       const initialValue =
         editorInstance.getValue();
 
@@ -2666,8 +3499,7 @@ export default function QueryWorkspacePage() {
         );
       } else if (
         queryReadyValidationRef.current &&
-        workspaceValidationRef.current &&
-        datasetIdValidationRef.current
+        workspaceValidationRef.current
       ) {
         scheduleSqlValidationRef.current(
           initialValue,
@@ -2756,6 +3588,95 @@ export default function QueryWorkspacePage() {
   // ==========================================
 
   async function handleGenerateSql() {
+    if (multiMode) {
+      if (
+        !workspace ||
+        selectedReadyDatasets.length <
+          2
+      ) {
+        setError(
+          "At least two ready datasets are required before generating combined SQL.",
+        );
+
+        return;
+      }
+
+      if (!multiContextReady) {
+        setError(
+          "Wait for the selected dataset schemas to finish loading.",
+        );
+
+        return;
+      }
+
+      if (!question.trim()) {
+        setError(
+          "Enter a natural-language question first.",
+        );
+
+        return;
+      }
+
+      try {
+        setGeneratingSql(true);
+        setError("");
+        setInfo("");
+        setActiveTab("result");
+        setResult(null);
+
+        const generated =
+          await queryApi.generateMultiDatasetSql(
+            {
+              workspaceId:
+                workspace.id,
+              datasetIds:
+                selectedReadyDatasets.map(
+                  (item) => item.id,
+                ),
+              conversationId:
+                conversationId ||
+                null,
+            },
+            question.trim(),
+          );
+
+        const displaySql =
+          toDisplayMultiSql(
+            generated.sql,
+          );
+
+        setSql(
+          displaySql,
+        );
+
+        scheduleSqlValidationRef.current(
+          displaySql,
+        );
+
+        setInfo(
+          "Combined SQL generated. Checking syntax and cross-file dataset compatibility...",
+        );
+      } catch (err) {
+        if (
+          err instanceof QueryApiError
+        ) {
+          setError(err.message);
+        } else if (
+          err instanceof Error
+        ) {
+          setError(err.message);
+        } else {
+          setError(
+            "Combined SQL generation failed.",
+          );
+        }
+      } finally {
+        setGeneratingSql(false);
+      }
+
+      return;
+    }
+
     if (
       !workspace ||
       !datasetId
@@ -2800,10 +3721,6 @@ export default function QueryWorkspacePage() {
         generated.sql,
       );
 
-      /*
-       * Reuse the same parser -> debounce ->
-       * backend semantic validation flow.
-       */
       scheduleSqlValidationRef.current(
         generated.sql,
       );
@@ -2831,23 +3748,49 @@ export default function QueryWorkspacePage() {
   }
 
   async function handleExecuteSql() {
-    if (
-      !workspace ||
-      !datasetId
-    ) {
+    if (!workspace) {
       setError(
-        "Select a dataset before executing SQL.",
+        "Select a workspace before executing SQL.",
       );
 
       return;
     }
 
-    if (!queryReady) {
-      setError(
-        "Wait for the selected dataset to become ready before running SQL.",
-      );
+    if (multiMode) {
+      if (
+        selectedReadyDatasets.length <
+          2
+      ) {
+        setError(
+          "At least two ready datasets are required before running combined SQL.",
+        );
 
-      return;
+        return;
+      }
+
+      if (!multiContextReady) {
+        setError(
+          "Wait for the selected dataset schemas to finish loading.",
+        );
+
+        return;
+      }
+    } else {
+      if (!datasetId) {
+        setError(
+          "Select a dataset before executing SQL.",
+        );
+
+        return;
+      }
+
+      if (!queryReady) {
+        setError(
+          "Wait for the selected dataset to become ready before running SQL.",
+        );
+
+        return;
+      }
     }
 
     const execution =
@@ -2864,13 +3807,6 @@ export default function QueryWorkspacePage() {
     const trimmedSql =
       execution.sql.trim();
 
-    /*
-     * Validate EXACTLY the text that is about to run.
-     *
-     * This is independent of the full-editor live state,
-     * which means selected-query execution works even when
-     * another part of the editor contains an error.
-     */
     const syntaxProblems =
       validateSqlSyntax(
         trimmedSql,
@@ -2915,10 +3851,6 @@ export default function QueryWorkspacePage() {
       return;
     }
 
-    /*
-     * Stop the normal live validator from racing against
-     * this explicit execution validation.
-     */
     if (
       validationTimerRef.current
     ) {
@@ -2982,28 +3914,52 @@ export default function QueryWorkspacePage() {
       setActiveTab("result");
 
       const nextResult =
-        await queryApi.executeSql(
-          {
-            workspaceId:
-              workspace.id,
+        multiMode
+          ? await queryApi.executeMultiDatasetSql(
+              {
+                workspaceId:
+                  workspace.id,
 
-            datasetId,
+                datasetIds:
+                  selectedReadyDatasets.map(
+                    (item) =>
+                      item.id,
+                  ),
 
-            conversationId:
-              conversationId ||
-              null,
-          },
-          trimmedSql,
-          question.trim() ||
-            null,
-        );
+                conversationId:
+                  conversationId ||
+                  null,
+              },
+              toBackendMultiSql(
+                trimmedSql,
+              ),
+              question.trim() ||
+                null,
+            )
+          : await queryApi.executeSql(
+              {
+                workspaceId:
+                  workspace.id,
+
+                datasetId,
+
+                conversationId:
+                  conversationId ||
+                  null,
+              },
+              trimmedSql,
+              question.trim() ||
+                null,
+            );
 
       setResult(
         nextResult,
       );
 
       setInfo(
-        `Query completed in ${nextResult.executionTimeMs} ms.`,
+        multiMode
+          ? `query completed in ${nextResult.executionTimeMs} ms.`
+          : `Query completed in ${nextResult.executionTimeMs} ms.`,
       );
     } catch (err) {
       if (
@@ -3032,12 +3988,9 @@ export default function QueryWorkspacePage() {
   async function handleRunQuestion(
     questionOverride?: string,
   ) {
-    if (
-      !workspace ||
-      !datasetId
-    ) {
+    if (!workspace) {
       setError(
-        "Select a dataset before running analysis.",
+        "Select a workspace before running analysis.",
       );
 
       return;
@@ -3056,6 +4009,43 @@ export default function QueryWorkspacePage() {
       return;
     }
 
+    if (multiMode) {
+      if (
+        selectedReadyDatasets.length <
+          2
+      ) {
+        setError(
+          "At least two ready datasets are required before running combined analysis.",
+        );
+
+        return;
+      }
+
+      if (!multiContextReady) {
+        setError(
+          "Wait for the selected dataset schemas to finish loading.",
+        );
+
+        return;
+      }
+    } else {
+      if (!datasetId) {
+        setError(
+          "Select a dataset before running analysis.",
+        );
+
+        return;
+      }
+
+      if (!queryReady) {
+        setError(
+          "Wait for the selected dataset to become ready before running analysis.",
+        );
+
+        return;
+      }
+    }
+
     try {
       setRunningQuestion(
         true,
@@ -3069,22 +4059,47 @@ export default function QueryWorkspacePage() {
       );
 
       const response =
-        await queryApi.queryFromQuestion(
-          {
-            workspaceId:
-              workspace.id,
+        multiMode
+          ? await queryApi.queryMultiDatasetFromQuestion(
+              {
+                workspaceId:
+                  workspace.id,
 
-            datasetId,
+                datasetIds:
+                  selectedReadyDatasets.map(
+                    (item) =>
+                      item.id,
+                  ),
 
-            conversationId:
-              conversationId ||
-              null,
-          },
-          nextQuestion,
-        );
+                conversationId:
+                  conversationId ||
+                  null,
+              },
+              nextQuestion,
+            )
+          : await queryApi.queryFromQuestion(
+              {
+                workspaceId:
+                  workspace.id,
+
+                datasetId,
+
+                conversationId:
+                  conversationId ||
+                  null,
+              },
+              nextQuestion,
+            );
+
+      const displaySql =
+        multiMode
+          ? toDisplayMultiSql(
+              response.sql,
+            )
+          : response.sql;
 
       setSql(
-        response.sql,
+        displaySql,
       );
 
       setResult(
@@ -3092,11 +4107,13 @@ export default function QueryWorkspacePage() {
       );
 
       scheduleSqlValidationRef.current(
-        response.sql,
+        displaySql,
       );
 
       setInfo(
-        `Analysis completed in ${response.result.executionTimeMs} ms. Checking generated SQL...`,
+        multiMode
+          ? `Combined analysis completed in ${response.result.executionTimeMs} ms. Checking generated SQL...`
+          : `Analysis completed in ${response.result.executionTimeMs} ms. Checking generated SQL...`,
       );
     } catch (err) {
       if (
@@ -3201,49 +4218,220 @@ export default function QueryWorkspacePage() {
           </div>
         </div>
 
+        {/* ==========================================
+            MULTI-DATASET CONTEXT
+        ========================================== */}
+        {multiMode && (
+          <div className="mb-8 overflow-hidden rounded-2xl border border-indigo-500/20 bg-indigo-500/5 shadow-sm">
+            <div className="border-b border-indigo-500/10 px-5 py-4 sm:px-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 text-indigo-500">
+                    <LayersIcon />
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-[14px] font-bold text-[var(--text)]">
+                        Combined analysis context
+                      </p>
+
+                      <span className="rounded-full bg-indigo-500/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-indigo-600 dark:text-indigo-400">
+                        {selectedReadyDatasets.length} datasets
+                      </span>
+                    </div>
+
+                    <p className="mt-1 text-[12px] font-medium leading-relaxed text-[var(--muted-strong)]">
+                      The selected datasets are available to the cross-file SQL engine as related analysis sources.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={
+                    exitMultiMode
+                  }
+                  className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-strong)] bg-[var(--card)] px-4 text-[12px] font-bold text-[var(--text)] transition-all hover:border-indigo-500/40 hover:bg-[var(--surface)] active:scale-95"
+                >
+                  Use one dataset
+                </button>
+              </div>
+            </div>
+
+            <div className="p-5 sm:p-6">
+              {selectedReadyDatasets.length <
+              2 ? (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-4">
+                  <p className="text-[13px] font-bold text-amber-600 dark:text-amber-400">
+                    Two ready datasets are required.
+                  </p>
+
+                  <p className="mt-1 text-[12px] font-medium leading-relaxed text-amber-600/80 dark:text-amber-300/80">
+                    Return to the dashboard and select at least two ready datasets for combined analysis.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {selectedReadyDatasets.map(
+                      (item) => {
+                        const selectedContext =
+                          multiContexts[
+                            item.id
+                          ];
+
+                        const columnCount =
+                          selectedContext
+                            ?.columns
+                            ?.length ??
+                          item.columnCount;
+
+                        return (
+                          <div
+                            key={
+                              item.id
+                            }
+                            className="rounded-xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border-strong)] bg-[var(--surface)] text-[var(--muted-strong)]">
+                                <LayersIcon className="h-4 w-4" />
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="truncate text-[13px] font-bold text-[var(--text)]">
+                                  {item.name}
+                                </p>
+
+                                <p className="mt-1 truncate text-[11px] font-medium text-[var(--muted)]">
+                                  {item.originalFilename}
+                                </p>
+                              </div>
+
+                              <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                            </div>
+
+                            <div className="mt-4 grid grid-cols-2 gap-2">
+                              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5">
+                                <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+                                  Rows
+                                </p>
+
+                                <p className="mt-1 text-[12px] font-bold text-[var(--text)]">
+                                  {item.rowCount.toLocaleString()}
+                                </p>
+                              </div>
+
+                              <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2.5">
+                                <p className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+                                  Columns
+                                </p>
+
+                                <p className="mt-1 text-[12px] font-bold text-[var(--text)]">
+                                  {columnCount.toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-[11px] font-medium text-[var(--muted-strong)]">
+                      {loadingMultiContexts
+                        ? "Loading schemas for the selected datasets..."
+                        : multiContextReady
+                          ? `${selectedReadyDatasets.length} datasets ready · ${multiDatasetColumnCount} combined columns available · cross-file SQL is enabled`
+                          : "Preparing selected dataset schemas..."}
+                    </p>
+
+                    <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+                      Cross-file engine
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ==========================================
+            DATASET SELECTOR
+        ========================================== */}
         <div className="mb-8 flex flex-col gap-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex w-full items-center gap-4 sm:w-auto">
-            <label
-              htmlFor="dataset-select"
-              className="shrink-0 text-[13px] font-bold text-[var(--muted-strong)]"
-            >
-              Active dataset:
-            </label>
+            {multiMode ? (
+              <>
+                <span className="shrink-0 text-[13px] font-bold text-[var(--muted-strong)]">
+                  Selected datasets
+                </span>
 
-            <select
-              id="dataset-select"
-              value={datasetId}
-              onChange={(event) =>
-                handleDatasetChange(
-                  event.target.value,
-                )
-              }
-              disabled={
-                !workspaceReady ||
-                loadingDatasets
-              }
-              className="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] px-4 py-2 text-[14px] font-bold text-[var(--text)] outline-none transition-colors hover:border-indigo-500/40 focus:border-indigo-500 disabled:cursor-not-allowed sm:w-[300px]"
-            >
-              <option value="">
-                Select a dataset
-              </option>
+                <div className="flex flex-wrap gap-2">
+                  {selectedReadyDatasets.map(
+                    (item) => (
+                      <span
+                        key={item.id}
+                        className="inline-flex items-center rounded-lg border border-indigo-500/20 bg-indigo-500/5 px-3 py-2 text-[12px] font-bold text-[var(--text)]"
+                      >
+                        {item.name}
+                      </span>
+                    ),
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <label
+                  htmlFor="dataset-select"
+                  className="shrink-0 text-[13px] font-bold text-[var(--muted-strong)]"
+                >
+                  Active dataset:
+                </label>
 
-              {datasets.map(
-                (item) => (
-                  <option
-                    key={item.id}
-                    value={item.id}
-                  >
-                    {item.name}
+                <select
+                  id="dataset-select"
+                  value={datasetId}
+                  onChange={(event) =>
+                    handleDatasetChange(
+                      event.target.value,
+                    )
+                  }
+                  disabled={
+                    !workspaceReady ||
+                    loadingDatasets
+                  }
+                  className="w-full rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] px-4 py-2 text-[14px] font-bold text-[var(--text)] outline-none transition-colors hover:border-indigo-500/40 focus:border-indigo-500 disabled:cursor-not-allowed sm:w-[300px]"
+                >
+                  <option value="">
+                    Select a dataset
                   </option>
-                ),
-              )}
-            </select>
+
+                  {datasets.map(
+                    (item) => (
+                      <option
+                        key={item.id}
+                        value={item.id}
+                      >
+                        {item.name}
+                      </option>
+                    ),
+                  )}
+                </select>
+              </>
+            )}
           </div>
 
           <div className="flex shrink-0 items-center gap-3">
-            {loadingDatasets ||
-            loadingContext ? (
+            {multiMode ? (
+              <span className="inline-flex items-center gap-2 rounded-md bg-indigo-500/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                <LayersIcon className="h-3.5 w-3.5" />
+                Multi-dataset mode
+              </span>
+            ) : loadingDatasets ||
+              loadingContext ? (
               <span className="text-[13px] font-medium text-[var(--muted)]">
                 Loading dataset context...
               </span>
@@ -3279,6 +4467,9 @@ export default function QueryWorkspacePage() {
         </div>
 
         <div className="flex flex-col gap-6">
+          {/* ==========================================
+              NATURAL LANGUAGE + SCHEMA
+          ========================================== */}
           <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
             <div className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-sm">
               <div className="mb-4">
@@ -3287,8 +4478,9 @@ export default function QueryWorkspacePage() {
                 </p>
 
                 <p className="mt-1 text-[13px] font-medium text-[var(--muted-strong)]">
-                  Ask what you want to know.
-                  The AI will generate SQL.
+                  {multiMode
+                    ? "Ask a question across the selected datasets. The backend will generate and execute cross-file SQL."
+                    : "Ask what you want to know. The AI will generate SQL."}
                 </p>
               </div>
 
@@ -3300,12 +4492,20 @@ export default function QueryWorkspacePage() {
                   )
                 }
                 rows={3}
-                placeholder="Example: Show total sales by city"
-                disabled={!datasetReady}
-                className="w-full resize-none rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] px-4 py-3 text-[14px] font-medium text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed"
+                placeholder={
+                  multiMode
+                    ? "Example: Compare customer revenue across orders and customer data"
+                    : "Example: Show total sales by city"
+                }
+                disabled={
+                  !queryReady
+                }
+                className="w-full resize-none rounded-xl border border-[var(--border-strong)] bg-[var(--surface)] px-4 py-3 text-[14px] font-medium text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-70"
               />
 
-              {datasetReady &&
+
+
+              {queryReady &&
                 !result &&
                 suggestedQuestions.length >
                   0 && (
@@ -3350,7 +4550,7 @@ export default function QueryWorkspacePage() {
                   </div>
                 )}
 
-              {datasetReady &&
+              {queryReady &&
                 result &&
                 followUpQuestions.length >
                   0 && (
@@ -3418,7 +4618,9 @@ export default function QueryWorkspacePage() {
 
                   {runningQuestion
                     ? "Analyzing..."
-                    : "Ask & Run"}
+                    : multiMode
+                      ? "Multi-file AI"
+                      : "Ask & Run"}
                 </button>
 
                 <button
@@ -3439,41 +4641,131 @@ export default function QueryWorkspacePage() {
                     : "Generate SQL"}
                 </button>
               </div>
+
             </div>
 
+            {/* ==========================================
+                SCHEMA
+            ========================================== */}
             <div className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-inner">
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--muted)]">
-                Dataset Schema
+                {multiMode
+                  ? "Selected Schemas"
+                  : "Dataset Schema"}
               </p>
 
-              <div className="custom-scrollbar mt-4 flex max-h-[300px] flex-col gap-2 overflow-y-auto">
-                {columnNames.length >
-                0 ? (
-                  columnNames.map(
-                    (
-                      columnName,
-                    ) => (
-                      <div
-                        key={
-                          columnName
-                        }
-                        className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-[12px] font-bold text-[var(--muted-strong)] shadow-sm"
-                      >
-                        {
-                          columnName
-                        }
-                      </div>
-                    ),
-                  )
-                ) : (
-                  <p className="text-[13px] font-medium text-[var(--muted)]">
-                    Schema unavailable.
-                  </p>
-                )}
-              </div>
+              {multiMode ? (
+                <div className="custom-scrollbar mt-4 max-h-[360px] space-y-4 overflow-y-auto">
+                  {selectedReadyDatasets.map(
+                    (item) => {
+                      const selectedContext =
+                        multiContexts[
+                          item.id
+                        ];
+
+                      return (
+                        <div
+                          key={
+                            item.id
+                          }
+                        >
+                          <p className="mb-2 truncate text-[11px] font-bold text-[var(--text)]">
+                            {item.name}
+                          </p>
+
+                          <div className="flex flex-col gap-2">
+                            {selectedContext
+                              ?.columns
+                              ?.length ? (
+                              selectedContext.columns
+                                .slice(
+                                  0,
+                                  12,
+                                )
+                                .map(
+                                  (
+                                    column,
+                                  ) => (
+                                    <div
+                                      key={`${item.id}-${column.name}`}
+                                      className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2"
+                                    >
+                                      <p className="truncate text-[11px] font-bold text-[var(--muted-strong)]">
+                                        {
+                                          column.name
+                                        }
+                                      </p>
+
+                                      <p className="mt-0.5 text-[9px] font-medium uppercase tracking-[0.08em] text-[var(--muted)]">
+                                        {
+                                          column.dataType
+                                        }
+                                      </p>
+                                    </div>
+                                  ),
+                                )
+                            ) : (
+                              <p className="text-[11px] font-medium text-[var(--muted)]">
+                                {loadingMultiContexts
+                                  ? "Loading schema..."
+                                  : "Schema unavailable."}
+                              </p>
+                            )}
+
+                            {(selectedContext
+                              ?.columns
+                              ?.length ??
+                              0) >
+                              12 && (
+                              <p className="text-[10px] font-semibold text-[var(--muted)]">
+                                +
+                                {(selectedContext
+                                  ?.columns
+                                  ?.length ??
+                                  0) -
+                                  12}{" "}
+                                more columns
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    },
+                  )}
+                </div>
+              ) : (
+                <div className="custom-scrollbar mt-4 flex max-h-[auto] flex-col gap-2 overflow-y-auto">
+                  {columnNames.length >
+                  0 ? (
+                    columnNames.map(
+                      (
+                        columnName,
+                      ) => (
+                        <div
+                          key={
+                            columnName
+                          }
+                          className="rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-[12px] font-bold text-[var(--muted-strong)] shadow-sm"
+                        >
+                          {
+                            columnName
+                          }
+                        </div>
+                      ),
+                    )
+                  ) : (
+                    <p className="text-[13px] font-medium text-[var(--muted)]">
+                      Schema unavailable.
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
+          {/* ==========================================
+              SQL EDITOR
+          ========================================== */}
           <div className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -3482,7 +4774,9 @@ export default function QueryWorkspacePage() {
                 </p>
 
                 <p className="mt-1 text-[13px] font-medium text-[var(--muted-strong)]">
-                  Edit SQL directly or use generated SQL.
+                  {multiMode
+                    ? "Edit cross-file SQL directly or let AI generate it from your question."
+                    : "Edit SQL directly or use generated SQL."}
                 </p>
               </div>
 
@@ -3503,7 +4797,9 @@ export default function QueryWorkspacePage() {
 
                 {executingSql
                   ? "Running..."
-                  : "Run SQL"}
+                  : multiMode
+                    ? "Run combined SQL"
+                    : "Run SQL"}
               </button>
             </div>
 
@@ -3522,12 +4818,6 @@ export default function QueryWorkspacePage() {
                     nextValue,
                   );
 
-                  /*
-                   * This is the LIVE path.
-                   *
-                   * Parser runs immediately.
-                   * Backend semantic check waits 500ms.
-                   */
                   scheduleSqlValidationRef.current(
                     nextValue,
                   );
@@ -3570,9 +4860,19 @@ export default function QueryWorkspacePage() {
                   smoothScrolling: true,
 
                   readOnly:
-                    !datasetReady,
+                    multiMode
+                      ? !multiContextReady
+                      : !datasetReady,
 
                   automaticLayout:
+                    true,
+
+                  // Keep Monaco suggestion/parameter widgets inside the editor viewport.
+                  // This prevents autocomplete from overflowing past the SQL editor border.
+                  allowOverflow:
+                    true,
+
+                  fixedOverflowWidgets:
                     true,
 
                   quickSuggestions:
@@ -3603,6 +4903,8 @@ export default function QueryWorkspacePage() {
               />
             </div>
 
+
+
             <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
               <div className="flex flex-col gap-2 border-b border-[var(--border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
@@ -3619,16 +4921,16 @@ export default function QueryWorkspacePage() {
                   {!sqlValidationPending &&
                     sqlProblems.length >
                       0 && (
-                      <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-bold text-red-600 dark:text-red-400">
-                        {
-                          sqlProblems.length
-                        }{" "}
-                        {sqlProblems.length ===
-                        1
-                          ? "problem"
-                          : "problems"}
-                      </span>
-                    )}
+                    <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-bold text-red-600 dark:text-red-400">
+                      {
+                        sqlProblems.length
+                      }{" "}
+                      {sqlProblems.length ===
+                      1
+                        ? "problem"
+                        : "problems"}
+                    </span>
+                  )}
                 </div>
 
                 {!sqlValidationPending &&
@@ -3648,8 +4950,10 @@ export default function QueryWorkspacePage() {
                     0 && (
                     <span className="text-[11px] font-semibold text-[var(--muted)]">
                       {queryReady
-                        ? "Syntax validation is active. Semantic checks run against the selected dataset."
-                        : "Syntax validation is active. Select a ready dataset for semantic validation."}
+                        ? multiMode
+                          ? "Syntax validation is active. Semantic checks run across the selected datasets."
+                          : "Syntax validation is active. Semantic checks run against the selected dataset."
+                        : "Type SQL to run the live syntax parser."}
                     </span>
                   )}
               </div>
@@ -3732,7 +5036,9 @@ export default function QueryWorkspacePage() {
                     "valid"
                       ? "No SQL validation problems detected."
                       : queryReady
-                        ? "Type SQL to run the live parser and dataset semantic checker."
+                        ? multiMode
+                          ? "Type SQL to run the live parser and cross-file semantic checker."
+                          : "Type SQL to run the live parser and dataset semantic checker."
                         : "Type SQL to run the live syntax parser."}
                   </div>
                 )
@@ -3822,6 +5128,20 @@ export default function QueryWorkspacePage() {
                 >
                   Visualization
                 </button>
+
+                <button
+  type="button"
+  onClick={() =>
+    setActiveTab("insights")
+  }
+  className={`pb-3 text-[13px] font-bold uppercase tracking-wider transition-colors ${
+    activeTab === "insights"
+      ? "border-b-2 border-indigo-500 text-indigo-600 dark:text-indigo-400"
+      : "text-[var(--muted)] hover:text-[var(--text)]"
+  }`}
+>
+  AI Insights
+</button>
               </div>
 
               <div className="min-h-[400px] p-5">
@@ -3862,11 +5182,10 @@ export default function QueryWorkspacePage() {
                             .map(
                               (
                                 item,
+                                index,
                               ) => (
                                 <div
-                                  key={
-                                    item.column
-                                  }
+                                  key={`${item.column}-${index}`}
                                   className="flex items-center gap-2 rounded-lg border border-[var(--border-strong)] bg-[var(--card)] px-3 py-1.5 shadow-sm"
                                 >
                                   <span className="text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
@@ -3897,11 +5216,10 @@ export default function QueryWorkspacePage() {
                             {result.columns.map(
                               (
                                 column,
+                                columnIndex,
                               ) => (
                                 <th
-                                  key={
-                                    column
-                                  }
+                                  key={`${column}-${columnIndex}`}
                                   className="whitespace-nowrap border-b border-[var(--border-strong)] px-5 py-3 text-[12px] font-bold text-[var(--text)]"
                                 >
                                   {
@@ -4002,6 +5320,17 @@ export default function QueryWorkspacePage() {
                     />
                   </div>
                 )}
+
+                {activeTab ===
+                "insights" && (
+                <div className="flex flex-col gap-4">
+                  <AIInsights
+                    result={
+                      result.aiInsights
+                    }
+                  />
+                </div>
+              )}
               </div>
             </div>
           )}

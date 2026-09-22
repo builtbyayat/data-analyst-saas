@@ -1,4 +1,6 @@
+
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -66,6 +68,48 @@ interface ValidateSqlBody {
   sql?: string;
 }
 
+interface MultiDatasetBody {
+  datasetIds?: string[];
+
+  sql?: string;
+
+  question?: string;
+
+  conversationId?: string;
+}
+
+interface MultiDatasetGenerateSqlBody {
+  datasetIds?: string[];
+
+  question?: string;
+
+  conversationId?: string;
+}
+
+interface MultiDatasetValidateSqlBody {
+  datasetIds?: string[];
+
+  sql?: string;
+}
+
+interface MultiDatasetQueryBody {
+  datasetIds?: string[];
+
+  sql?: string;
+
+  question?: string;
+
+  conversationId?: string;
+}
+
+interface MultiDatasetNaturalLanguageQueryBody {
+  datasetIds?: string[];
+
+  question?: string;
+
+  conversationId?: string;
+}
+
 @Controller(
   'workspaces/:workspaceId',
 )
@@ -80,6 +124,10 @@ export class QueryController {
 
     private readonly resultExportService: ResultExportService,
   ) {}
+
+  // ==========================================
+  // SINGLE-DATASET PREVIEW
+  // ==========================================
 
   @Get(
     'datasets/:datasetId/preview',
@@ -129,6 +177,10 @@ export class QueryController {
     );
   }
 
+  // ==========================================
+  // SINGLE-DATASET SQL GENERATION
+  // ==========================================
+
   @Post(
     'datasets/:datasetId/generate-sql',
   )
@@ -171,6 +223,10 @@ export class QueryController {
     );
   }
 
+  // ==========================================
+  // SINGLE-DATASET SQL VALIDATION
+  // ==========================================
+
   @Post(
     'datasets/:datasetId/validate-sql',
   )
@@ -209,6 +265,10 @@ export class QueryController {
       body.sql ?? '',
     );
   }
+
+  // ==========================================
+  // SINGLE-DATASET SYNCHRONOUS QUERY
+  // ==========================================
 
   @Post(
     'datasets/:datasetId/query',
@@ -254,6 +314,65 @@ export class QueryController {
     );
   }
 
+  // ==========================================
+  // SINGLE-DATASET BACKGROUND SQL JOB
+  // ==========================================
+
+  @Post(
+    'datasets/:datasetId/query/jobs',
+  )
+  async enqueueSqlQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('datasetId')
+    datasetId: string,
+
+    @Body()
+    body: ExecuteSqlBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!body.sql?.trim()) {
+      throw new BadRequestException(
+        'SQL query is required',
+      );
+    }
+
+    return this.queryService.enqueueSqlQuery(
+      datasetId,
+      workspaceId,
+      userId,
+      body.sql,
+      body.question ??
+        null,
+      body.conversationId ??
+        null,
+    );
+  }
+
+  // ==========================================
+  // SINGLE-DATASET SYNCHRONOUS
+  // NATURAL-LANGUAGE QUERY
+  // ==========================================
+
   @Post(
     'datasets/:datasetId/query-from-question',
   )
@@ -295,6 +414,387 @@ export class QueryController {
         null,
     );
   }
+
+  // ==========================================
+  // SINGLE-DATASET BACKGROUND
+  // NATURAL-LANGUAGE JOB
+  // ==========================================
+
+  @Post(
+    'datasets/:datasetId/query-from-question/jobs',
+  )
+  async enqueueNaturalLanguageQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('datasetId')
+    datasetId: string,
+
+    @Body()
+    body: NaturalLanguageQueryBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.queryService.enqueueNaturalLanguageQuery(
+      datasetId,
+      workspaceId,
+      userId,
+      body.question ?? '',
+      body.conversationId ??
+        null,
+    );
+  }
+
+  // ==========================================
+  // MULTI-DATASET INTELLIGENCE
+  // ==========================================
+
+  @Post(
+    'multi-datasets/generate-sql',
+  )
+  async generateMultiDatasetSql(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: MultiDatasetGenerateSqlBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const datasetIds =
+      this.requireMultiDatasetIds(
+        body.datasetIds,
+      );
+
+    return this.queryService.generateSqlForMultipleDatasets(
+      datasetIds,
+      workspaceId,
+      userId,
+      body.question ?? '',
+      body.conversationId ??
+        null,
+    );
+  }
+
+  @Post(
+    'multi-datasets/validate-sql',
+  )
+  async validateMultiDatasetSql(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: MultiDatasetValidateSqlBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const datasetIds =
+      this.requireMultiDatasetIds(
+        body.datasetIds,
+      );
+
+    return this.queryService.validateSqlForMultipleDatasets(
+      datasetIds,
+      workspaceId,
+      body.sql ?? '',
+    );
+  }
+
+  @Post(
+    'multi-datasets/query',
+  )
+  async executeMultiDatasetSql(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: MultiDatasetQueryBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const datasetIds =
+      this.requireMultiDatasetIds(
+        body.datasetIds,
+      );
+
+    return this.queryService.executeSqlForMultipleDatasets(
+      datasetIds,
+      workspaceId,
+      userId,
+      body.sql ?? '',
+      body.question ??
+        null,
+      body.conversationId ??
+        null,
+    );
+  }
+
+  // ==========================================
+  // MULTI-DATASET BACKGROUND SQL JOB
+  // ==========================================
+
+  @Post(
+    'multi-datasets/query/jobs',
+  )
+  async enqueueMultiDatasetSql(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: MultiDatasetQueryBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const datasetIds =
+      this.requireMultiDatasetIds(
+        body.datasetIds,
+      );
+
+    if (!body.sql?.trim()) {
+      throw new BadRequestException(
+        'SQL query is required',
+      );
+    }
+
+    return this.queryService.enqueueSqlQueryForMultipleDatasets(
+      datasetIds,
+      workspaceId,
+      userId,
+      body.sql,
+      body.question ??
+        null,
+      body.conversationId ??
+        null,
+    );
+  }
+
+  @Post(
+    'multi-datasets/query-from-question',
+  )
+  async executeMultiDatasetNaturalLanguageQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: MultiDatasetNaturalLanguageQueryBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const datasetIds =
+      this.requireMultiDatasetIds(
+        body.datasetIds,
+      );
+
+    return this.queryService.executeNaturalLanguageQueryForMultipleDatasets(
+      datasetIds,
+      workspaceId,
+      userId,
+      body.question ?? '',
+      body.conversationId ??
+        null,
+    );
+  }
+
+  // ==========================================
+  // MULTI-DATASET BACKGROUND
+  // NATURAL-LANGUAGE JOB
+  // ==========================================
+
+  @Post(
+    'multi-datasets/query-from-question/jobs',
+  )
+  async enqueueMultiDatasetNaturalLanguageQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: MultiDatasetNaturalLanguageQueryBody,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const datasetIds =
+      this.requireMultiDatasetIds(
+        body.datasetIds,
+      );
+
+    return this.queryService.enqueueNaturalLanguageQueryForMultipleDatasets(
+      datasetIds,
+      workspaceId,
+      userId,
+      body.question ?? '',
+      body.conversationId ??
+        null,
+    );
+  }
+
+  // ==========================================
+  // BACKGROUND ANALYSIS JOB STATUS
+  // ==========================================
+
+  @Get(
+    'analysis-jobs/:jobId',
+  )
+  async getAnalysisJobStatus(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('jobId')
+    jobId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!jobId.trim()) {
+      throw new BadRequestException(
+        'Analysis job ID is required',
+      );
+    }
+
+    return this.queryService.getAnalysisJobStatus(
+      jobId.trim(),
+      workspaceId,
+      userId,
+    );
+  }
+
+  // ==========================================
+  // SINGLE-DATASET EXPORT
+  // ==========================================
 
   @Post(
     'datasets/:datasetId/query/export',
@@ -360,6 +860,10 @@ export class QueryController {
     );
   }
 
+  // ==========================================
+  // QUERY HISTORY
+  // ==========================================
+
   @Get(
     'query-history',
   )
@@ -411,5 +915,58 @@ export class QueryController {
         : 50,
       conversationId,
     );
+  }
+
+  // ==========================================
+  // VALIDATION
+  // ==========================================
+
+  private requireMultiDatasetIds(
+    datasetIds:
+      | string[]
+      | undefined,
+  ): string[] {
+    if (
+      !Array.isArray(
+        datasetIds,
+      )
+    ) {
+      throw new BadRequestException(
+        'datasetIds must be an array of dataset IDs',
+      );
+    }
+
+    const normalized =
+      Array.from(
+        new Set(
+          datasetIds
+            .filter(
+              (
+                datasetId,
+              ): datasetId is string =>
+                typeof datasetId ===
+                  'string' &&
+                datasetId.trim()
+                  .length > 0,
+            )
+            .map(
+              (
+                datasetId,
+              ) =>
+                datasetId.trim(),
+            ),
+        ),
+      );
+
+    if (
+      normalized.length <
+      2
+    ) {
+      throw new BadRequestException(
+        'At least two dataset IDs are required for multi-dataset analysis',
+      );
+    }
+
+    return normalized;
   }
 }

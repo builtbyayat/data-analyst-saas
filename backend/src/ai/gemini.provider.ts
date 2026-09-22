@@ -14,21 +14,38 @@ import type {
 
 @Injectable()
 export class GeminiProvider implements AiProvider {
-  private readonly logger =
-    new Logger(GeminiProvider.name);
+  private readonly logger = new Logger(GeminiProvider.name);
 
-  private readonly client:
-    GoogleGenAI | null;
+  private readonly client: GoogleGenAI | null;
 
   private readonly model: string;
 
+  private readonly timeoutMs: number;
+
+  private readonly retryAttempts: number;
+
   constructor() {
-    const apiKey =
-      process.env.GEMINI_API_KEY?.trim();
+    const apiKey = process.env.GEMINI_API_KEY?.trim();
 
     this.model =
       process.env.GEMINI_MODEL?.trim() ||
       'gemini-3.8-flash';
+
+    this.timeoutMs = Math.max(
+      10_000,
+      Number.parseInt(
+        process.env.GEMINI_TIMEOUT_MS ?? '45000',
+        10,
+      ) || 45_000,
+    );
+
+    this.retryAttempts = Math.max(
+      1,
+      Number.parseInt(
+        process.env.GEMINI_RETRY_ATTEMPTS ?? '2',
+        10,
+      ) || 2,
+    );
 
     this.client = apiKey
       ? new GoogleGenAI({
@@ -51,8 +68,7 @@ export class GeminiProvider implements AiProvider {
         await this.client.models.generateContent({
           model: this.model,
 
-          contents:
-            request.userPrompt,
+          contents: request.userPrompt,
 
           config: {
             systemInstruction:
@@ -62,13 +78,13 @@ export class GeminiProvider implements AiProvider {
               request.maxOutputTokens ?? 2000,
 
             httpOptions: {
-              timeout: 15000,
+              timeout: this.timeoutMs,
 
               retryOptions: {
-                attempts: 2,
+                attempts: this.retryAttempts,
                 initialDelay: 0.5,
                 expBase: 2,
-                maxDelay: 2,
+                maxDelay: 3,
                 jitter: 0.2,
                 httpStatusCodes: [
                   408,
@@ -95,28 +111,32 @@ export class GeminiProvider implements AiProvider {
       return {
         text,
 
-        provider:
-          'gemini',
+        provider: 'gemini',
 
-        model:
-          this.model,
+        model: this.model,
 
         inputTokens:
           response.usageMetadata
-            ?.promptTokenCount ??
-          null,
+            ?.promptTokenCount ?? null,
 
         outputTokens:
           response.usageMetadata
-            ?.candidatesTokenCount ??
-          null,
+            ?.candidatesTokenCount ?? null,
       };
     } catch (error) {
-      this.logger.error(
-        'Gemini request failed',
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error);
+
+      const stack =
         error instanceof Error
           ? error.stack
-          : String(error),
+          : undefined;
+
+      this.logger.error(
+        `Gemini request failed: ${message}`,
+        stack,
       );
 
       if (
@@ -127,7 +147,7 @@ export class GeminiProvider implements AiProvider {
       }
 
       throw new ServiceUnavailableException(
-        'Gemini AI request failed',
+        'Gemini AI request failed. Please try again.',
       );
     }
   }

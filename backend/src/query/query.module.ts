@@ -6,7 +6,9 @@ import { Dataset } from '../datasets/dataset.entity.js';
 import { DatasetsModule } from '../datasets/datasets.module.js';
 import { WorkspacesModule } from '../workspaces/workspaces.module.js';
 
+import { AIInsightsService } from './ai-insights.service.js';
 import { DuckDBService } from './duckdb.service.js';
+import { PythonAnalyticsService } from './python-analytics.service.js';
 import { QueryController } from './query.controller.js';
 import { QueryHistory } from './query-history.entity.js';
 import { QueryHistoryService } from './query-history.service.js';
@@ -17,6 +19,8 @@ import { ResultVisualizationService } from './result-visualization.service.js';
 import { SqlExplanationService } from './sql-explanation.service.js';
 import { SqlGenerationService } from './sql-generation.service.js';
 import { SqlValidatorService } from './sql-validator.service.js';
+
+import { GeminiProvider } from '../ai/gemini.provider.js';
 
 @Module({
   imports: [
@@ -39,6 +43,12 @@ import { SqlValidatorService } from './sql-validator.service.js';
   providers: [
     DuckDBService,
 
+    PythonAnalyticsService,
+
+    GeminiProvider,
+
+    AIInsightsService,
+
     QueryService,
 
     QueryHistoryService,
@@ -58,6 +68,10 @@ import { SqlValidatorService } from './sql-validator.service.js';
 
   exports: [
     DuckDBService,
+
+    PythonAnalyticsService,
+
+    AIInsightsService,
 
     QueryService,
 

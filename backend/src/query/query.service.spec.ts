@@ -1,3 +1,4 @@
+
 import {
   BadRequestException,
 } from '@nestjs/common';
@@ -8,6 +9,10 @@ import {
 } from '@nestjs/testing';
 
 import {
+  getQueueToken,
+} from '@nestjs/bullmq';
+
+import {
   getRepositoryToken,
 } from '@nestjs/typeorm';
 
@@ -15,6 +20,7 @@ import { vi } from 'vitest';
 
 import { AiService } from '../ai/ai.service.js';
 import { Dataset } from '../datasets/dataset.entity.js';
+import { DatasetsService } from '../datasets/datasets.service.js';
 import { StorageService } from '../storage/storage.service.js';
 
 import { DuckDBService } from './duckdb.service.js';
@@ -27,17 +33,27 @@ import {
 } from './result-visualization.service.js';
 import { SqlGenerationService } from './sql-generation.service.js';
 import { SqlValidatorService } from './sql-validator.service.js';
+import {
+  AIInsightsService,
+} from './ai-insights.service.js';
 
 describe('QueryService', () => {
   let queryService: QueryService;
 
+  const analysisQueueMock = {
+    add: vi.fn(),
+    getJob: vi.fn(),
+  };
+
   const datasetRepositoryMock = {
     findOne: vi.fn(),
+    find: vi.fn(),
   };
 
   const queryHistoryRepositoryMock = {
     create: vi.fn(),
     save: vi.fn(),
+    find: vi.fn(),
   };
 
   const storageServiceMock = {
@@ -46,6 +62,7 @@ describe('QueryService', () => {
 
   const duckDbServiceMock = {
     queryDataset: vi.fn(),
+    validateDatasetQuery: vi.fn(),
   };
 
   const sqlValidatorServiceMock = {
@@ -66,6 +83,14 @@ describe('QueryService', () => {
 
   const aiServiceMock = {
     generateText: vi.fn(),
+  };
+
+  const aiInsightsServiceMock = {
+    generateInsights: vi.fn(),
+  };
+
+  const datasetsServiceMock = {
+    getAnalysisContext: vi.fn(),
   };
 
   const dataset = {
@@ -115,17 +140,36 @@ describe('QueryService', () => {
     ],
   };
 
-  const defaultVisualization = {} as ResultVisualization;
+  const defaultVisualization =
+    {} as ResultVisualization;
 
   const defaultExplanation =
     'The result shows three cities with Delhi having the highest total sales, followed by Lucknow and Kanpur.';
 
+  const defaultFollowUpQuestions = [
+    'Which city has the highest total sales?',
+    'How does Lucknow compare with Kanpur?',
+    'What is the total sales across all cities?',
+  ];
+
   beforeEach(async () => {
     vi.clearAllMocks();
+
+    analysisQueueMock.add.mockResolvedValue({
+      id: 'job-1',
+    });
+
+    analysisQueueMock.getJob.mockResolvedValue(
+      null,
+    );
 
     datasetRepositoryMock.findOne.mockResolvedValue(
       dataset,
     );
+
+    datasetRepositoryMock.find.mockResolvedValue([
+      dataset,
+    ]);
 
     queryHistoryRepositoryMock.create.mockImplementation(
       (value) => value,
@@ -135,12 +179,20 @@ describe('QueryService', () => {
       undefined,
     );
 
+    queryHistoryRepositoryMock.find.mockResolvedValue(
+      [],
+    );
+
     storageServiceMock.download.mockResolvedValue(
       Buffer.from('test parquet data'),
     );
 
     duckDbServiceMock.queryDataset.mockResolvedValue(
       defaultQueryResult,
+    );
+
+    duckDbServiceMock.validateDatasetQuery.mockResolvedValue(
+      undefined,
     );
 
     sqlValidatorServiceMock.validate.mockImplementation(
@@ -171,13 +223,83 @@ describe('QueryService', () => {
       defaultVisualization,
     );
 
-    aiServiceMock.generateText.mockResolvedValue({
-      text: defaultExplanation,
-      provider: 'test-provider',
-      model: 'test-model',
-      inputTokens: null,
-      outputTokens: null,
-    });
+    aiServiceMock.generateText.mockImplementation(
+      async ({
+        systemPrompt,
+      }: {
+        systemPrompt?: string;
+      }) => {
+        if (
+          systemPrompt?.includes(
+            'follow-up analytical questions',
+          )
+        ) {
+          return {
+            text:
+              defaultFollowUpQuestions.join(
+                '\n',
+              ),
+            provider:
+              'test-provider',
+            model:
+              'test-model',
+            inputTokens:
+              null,
+            outputTokens:
+              null,
+          };
+        }
+
+        return {
+          text:
+            defaultExplanation,
+          provider:
+            'test-provider',
+          model:
+            'test-model',
+          inputTokens:
+            null,
+          outputTokens:
+            null,
+        };
+      },
+    );
+
+    aiInsightsServiceMock.generateInsights.mockResolvedValue(
+      null,
+    );
+
+    datasetsServiceMock.getAnalysisContext.mockResolvedValue(
+      {
+        dataset: {
+          id:
+            dataset.id,
+
+          name:
+            dataset.name,
+
+          originalFilename:
+            dataset.originalFilename,
+
+          fileType:
+            dataset.fileType,
+
+          fileSize:
+            dataset.fileSize,
+
+          rowCount:
+            dataset.rowCount,
+
+          columnCount:
+            dataset.columnCount,
+
+          status:
+            dataset.status,
+        },
+
+        columns: [],
+      },
+    );
 
     const app: TestingModule =
       await Test.createTestingModule({
@@ -186,7 +308,19 @@ describe('QueryService', () => {
 
           {
             provide:
-              getRepositoryToken(Dataset),
+              getQueueToken(
+                'analysis',
+              ),
+
+            useValue:
+              analysisQueueMock,
+          },
+
+          {
+            provide:
+              getRepositoryToken(
+                Dataset,
+              ),
 
             useValue:
               datasetRepositoryMock,
@@ -194,7 +328,9 @@ describe('QueryService', () => {
 
           {
             provide:
-              getRepositoryToken(QueryHistory),
+              getRepositoryToken(
+                QueryHistory,
+              ),
 
             useValue:
               queryHistoryRepositoryMock,
@@ -255,6 +391,22 @@ describe('QueryService', () => {
             useValue:
               aiServiceMock,
           },
+
+          {
+            provide:
+              AIInsightsService,
+
+            useValue:
+              aiInsightsServiceMock,
+          },
+
+          {
+            provide:
+              DatasetsService,
+
+            useValue:
+              datasetsServiceMock,
+          },
         ],
       }).compile();
 
@@ -262,7 +414,22 @@ describe('QueryService', () => {
       app.get<QueryService>(
         QueryService,
       );
+
+    /*
+     * Unit tests must not spawn the real Python analytics
+     * process. The Python analytics layer is tested separately.
+     */
+    vi.spyOn(
+      queryService as any,
+      'runResultAnalytics',
+    ).mockResolvedValue(
+      null,
+    );
   });
+
+  // ==========================================
+  // SYNCHRONOUS QUERY EXECUTION
+  // ==========================================
 
   it('should execute a valid SQL query and return results', async () => {
     const result =
@@ -303,6 +470,15 @@ describe('QueryService', () => {
 
       explanation:
         defaultExplanation,
+
+      analytics:
+        null,
+
+      aiInsights:
+        null,
+
+      followUpQuestions:
+        [],
     });
 
     expect(
@@ -424,6 +600,15 @@ describe('QueryService', () => {
 
       explanation:
         defaultExplanation,
+
+      analytics:
+        null,
+
+      aiInsights:
+        null,
+
+      followUpQuestions:
+        [],
     });
 
     expect(
@@ -630,11 +815,18 @@ describe('QueryService', () => {
       'dataset-1',
       'workspace-1',
       'Show total sales by city',
+      [],
     );
 
     expect(
       aiServiceMock.generateText,
     ).toHaveBeenCalled();
+
+    expect(
+      result.result.followUpQuestions,
+    ).toEqual(
+      defaultFollowUpQuestions,
+    );
 
     expect(result).toEqual({
       question:
@@ -679,7 +871,552 @@ describe('QueryService', () => {
 
         explanation:
           defaultExplanation,
+
+        analytics:
+          null,
+
+        aiInsights:
+          null,
+
+        followUpQuestions:
+          defaultFollowUpQuestions,
       },
+    });
+  });
+
+  // ==========================================
+  // BACKGROUND JOB ENQUEUEING
+  // ==========================================
+
+  it('should enqueue a SQL analysis job', async () => {
+    const result =
+      await queryService.enqueueSqlQuery(
+        'dataset-1',
+        'workspace-1',
+        'user-1',
+        'SELECT * FROM dataset',
+        'Show all sales',
+        'conversation-1',
+      );
+
+    expect(
+      result.queue,
+    ).toBe('analysis');
+
+    expect(
+      result.status,
+    ).toBe('queued');
+
+    expect(
+      result.jobId,
+    ).toEqual(
+      expect.any(String),
+    );
+
+    expect(
+      analysisQueueMock.add,
+    ).toHaveBeenCalledTimes(1);
+
+    expect(
+      analysisQueueMock.add,
+    ).toHaveBeenCalledWith(
+      'sql',
+
+      {
+        type:
+          'sql',
+
+        datasetIds: [
+          'dataset-1',
+        ],
+
+        workspaceId:
+          'workspace-1',
+
+        userId:
+          'user-1',
+
+        sql:
+          'SELECT * FROM dataset',
+
+        question:
+          'Show all sales',
+
+        conversationId:
+          'conversation-1',
+      },
+
+      expect.objectContaining({
+        jobId:
+          result.jobId,
+
+        attempts:
+          expect.any(Number),
+
+        backoff: {
+          type:
+            'exponential',
+
+          delay:
+            expect.any(Number),
+        },
+
+        removeOnComplete:
+          expect.any(Number),
+
+        removeOnFail:
+          expect.any(Number),
+      }),
+    );
+  });
+
+  it('should enqueue a natural-language analysis job', async () => {
+    const result =
+      await queryService.enqueueNaturalLanguageQuery(
+        'dataset-1',
+        'workspace-1',
+        'user-1',
+        'Show total sales by city',
+        'conversation-2',
+      );
+
+    expect(
+      result.queue,
+    ).toBe('analysis');
+
+    expect(
+      result.status,
+    ).toBe('queued');
+
+    expect(
+      analysisQueueMock.add,
+    ).toHaveBeenCalledWith(
+      'natural_language',
+
+      {
+        type:
+          'natural_language',
+
+        datasetIds: [
+          'dataset-1',
+        ],
+
+        workspaceId:
+          'workspace-1',
+
+        userId:
+          'user-1',
+
+        question:
+          'Show total sales by city',
+
+        conversationId:
+          'conversation-2',
+      },
+
+      expect.objectContaining({
+        jobId:
+          result.jobId,
+      }),
+    );
+  });
+
+  it('should reject an empty background natural-language job', async () => {
+    await expect(
+      queryService.enqueueNaturalLanguageQuery(
+        'dataset-1',
+        'workspace-1',
+        'user-1',
+        '   ',
+      ),
+    ).rejects.toThrow(
+      'Question is required',
+    );
+
+    expect(
+      analysisQueueMock.add,
+    ).not.toHaveBeenCalled();
+  });
+
+  // ==========================================
+  // BACKGROUND JOB STATUS
+  // ==========================================
+
+  it('should return analysis job status for the owning user and workspace', async () => {
+    const job = {
+      id:
+        'job-42',
+
+      data: {
+        type:
+          'sql',
+
+        datasetIds: [
+          'dataset-1',
+        ],
+
+        workspaceId:
+          'workspace-1',
+
+        userId:
+          'user-1',
+
+        sql:
+          'SELECT * FROM dataset',
+      },
+
+      progress: {
+        stage:
+          'validating',
+
+        percent:
+          15,
+      },
+
+      attemptsMade:
+        1,
+
+      opts: {
+        attempts:
+          3,
+      },
+
+      timestamp:
+        1_700_000_000_000,
+
+      processedOn:
+        1_700_000_001_000,
+
+      finishedOn:
+        undefined,
+
+      failedReason:
+        undefined,
+
+      returnvalue:
+        undefined,
+
+      getState:
+        vi.fn().mockResolvedValue(
+          'active',
+        ),
+    };
+
+    analysisQueueMock.getJob.mockResolvedValue(
+      job,
+    );
+
+    const result =
+      await queryService.getAnalysisJobStatus(
+        'job-42',
+        'workspace-1',
+        'user-1',
+      );
+
+    expect(result).toEqual({
+      jobId:
+        'job-42',
+
+      queue:
+        'analysis',
+
+      type:
+        'sql',
+
+      status:
+        'active',
+
+      progress: {
+        stage:
+          'validating',
+
+        percent:
+          15,
+      },
+
+      attemptsMade:
+        1,
+
+      maxAttempts:
+        3,
+
+      createdAt:
+        new Date(
+          1_700_000_000_000,
+        ).toISOString(),
+
+      processedAt:
+        new Date(
+          1_700_000_001_000,
+        ).toISOString(),
+
+      finishedAt:
+        null,
+
+      failedReason:
+        null,
+
+      result:
+        null,
+    });
+
+    expect(
+      analysisQueueMock.getJob,
+    ).toHaveBeenCalledWith(
+      'job-42',
+    );
+  });
+
+  it('should not expose analysis jobs belonging to another user', async () => {
+    const job = {
+      id:
+        'job-42',
+
+      data: {
+        type:
+          'sql',
+
+        datasetIds: [
+          'dataset-1',
+        ],
+
+        workspaceId:
+          'workspace-1',
+
+        userId:
+          'different-user',
+
+        sql:
+          'SELECT * FROM dataset',
+      },
+
+      getState:
+        vi.fn().mockResolvedValue(
+          'active',
+        ),
+
+      progress:
+        0,
+
+      attemptsMade:
+        0,
+
+      opts: {
+        attempts:
+          3,
+      },
+
+      timestamp:
+        Date.now(),
+
+      processedOn:
+        undefined,
+
+      finishedOn:
+        undefined,
+
+      failedReason:
+        undefined,
+
+      returnvalue:
+        undefined,
+    };
+
+    analysisQueueMock.getJob.mockResolvedValue(
+      job,
+    );
+
+    await expect(
+      queryService.getAnalysisJobStatus(
+        'job-42',
+        'workspace-1',
+        'user-1',
+      ),
+    ).rejects.toThrow(
+      'Analysis job was not found for this workspace',
+    );
+  });
+
+  // ==========================================
+  // WORKER PROCESSING CONTRACT
+  // ==========================================
+
+  it('should process a SQL analysis job through the synchronous execution path', async () => {
+    const expectedResult = {
+      sql:
+        'SELECT * FROM dataset',
+
+      columns: [
+        'city',
+      ],
+
+      rows: [
+        ['Delhi'],
+      ],
+
+      rowCount:
+        1,
+
+      truncated:
+        false,
+
+      executionTimeMs:
+        12,
+
+      summary:
+        defaultSummary,
+
+      visualization:
+        defaultVisualization,
+
+      explanation:
+        null,
+
+      followUpQuestions:
+        [],
+
+      analytics:
+        null,
+
+      aiInsights:
+        null,
+    };
+
+    const executeSqlSpy =
+      vi.spyOn(
+        queryService,
+        'executeSql',
+      ).mockResolvedValue(
+        expectedResult,
+      );
+
+    const job = {
+      data: {
+        type:
+          'sql',
+
+        datasetIds: [
+          'dataset-1',
+        ],
+
+        workspaceId:
+          'workspace-1',
+
+        userId:
+          'user-1',
+
+        sql:
+          'SELECT * FROM dataset',
+
+        conversationId:
+          null,
+      },
+
+      updateProgress:
+        vi.fn().mockResolvedValue(
+          undefined,
+        ),
+    } as any;
+
+    const result =
+      await queryService.processAnalysisJob(
+        job,
+      );
+
+    expect(
+      result,
+    ).toEqual(
+      expectedResult,
+    );
+
+    expect(
+      executeSqlSpy,
+    ).toHaveBeenCalledWith(
+      'dataset-1',
+      'workspace-1',
+      'user-1',
+      'SELECT * FROM dataset',
+      null,
+      null,
+    );
+
+    expect(
+      job.updateProgress,
+    ).toHaveBeenCalledWith({
+      stage:
+        'started',
+
+      percent:
+        5,
+    });
+
+    expect(
+      job.updateProgress,
+    ).toHaveBeenCalledWith({
+      stage:
+        'completed',
+
+      percent:
+        100,
+    });
+  });
+
+  it('should mark an analysis job as failed when processing throws', async () => {
+    const executeSqlSpy =
+      vi.spyOn(
+        queryService,
+        'executeSql',
+      ).mockRejectedValue(
+        new BadRequestException(
+          'Query execution failed',
+        ),
+      );
+
+    const job = {
+      data: {
+        type:
+          'sql',
+
+        datasetIds: [
+          'dataset-1',
+        ],
+
+        workspaceId:
+          'workspace-1',
+
+        userId:
+          'user-1',
+
+        sql:
+          'SELECT * FROM dataset',
+      },
+
+      updateProgress:
+        vi.fn().mockResolvedValue(
+          undefined,
+        ),
+    } as any;
+
+    await expect(
+      queryService.processAnalysisJob(
+        job,
+      ),
+    ).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+
+    expect(
+      executeSqlSpy,
+    ).toHaveBeenCalled();
+
+    expect(
+      job.updateProgress,
+    ).toHaveBeenCalledWith({
+      stage:
+        'failed',
+
+      percent:
+        100,
     });
   });
 });
