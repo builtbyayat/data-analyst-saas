@@ -314,13 +314,31 @@ const navigation: NavigationItem[] = [
   {
     label: "Query workspace",
     href: "/dashboard/query",
-    available: false,
+    available: true,
     icon: IconSparkles,
+  },
+  {
+    label: "Saved analyses",
+    href: "/dashboard/saved-analyses",
+    available: true,
+    icon: IconGrid,
+  },
+  {
+    label: "Saved queries",
+    href: "/dashboard/saved-queries",
+    available: true,
+    icon: IconSparkles,
+  },
+  {
+    label: "Reports",
+    href: "/dashboard/reports",
+    available: true,
+    icon: IconGrid,
   },
   {
     label: "History",
     href: "/dashboard/history",
-    available: false,
+    available: true,
     icon: IconHistory,
   },
 ];
@@ -365,10 +383,6 @@ export default function DashboardShell({
       );
     };
   }, [sidebarOpen]);
-
-  useEffect(() => {
-    setSidebarOpen(false);
-  }, [pathname]);
 
   const isNavigationActive = (
     item: NavigationItem,
@@ -500,6 +514,7 @@ export default function DashboardShell({
                 <Link
                   key={item.label}
                   href={item.href}
+                  onClick={() => setSidebarOpen(false)}
                   title={item.label}
                   className={[
                     "group flex w-full items-center rounded-xl px-3 py-3 text-left transition",

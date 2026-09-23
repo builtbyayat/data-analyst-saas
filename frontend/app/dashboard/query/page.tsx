@@ -15,6 +15,7 @@ import {
   type Dataset,
   type DatasetContext,
   datasetApi,
+  workspaceExperienceApi,
 } from "../../../lib/api";
 import { getAccessToken } from "../../../lib/auth";
 import {
@@ -960,6 +961,9 @@ export default function QueryWorkspacePage() {
   const [info, setInfo] =
     useState("");
 
+  const [savingRecord, setSavingRecord] =
+    useState(false);
+
   const columnNamesRef =
     useRef<string[]>([]);
 
@@ -1151,6 +1155,11 @@ export default function QueryWorkspacePage() {
     } else {
       setSql(DEFAULT_SQL);
     }
+
+    const initialSql = params.get("sql");
+    const initialQuestion = params.get("question");
+    if (initialSql) setSql(initialSql);
+    if (initialQuestion) setQuestion(initialQuestion);
 
     datasetIdValidationRef.current =
       id;
@@ -4136,6 +4145,49 @@ export default function QueryWorkspacePage() {
     }
   }
 
+  async function saveCurrentRecord(kind: "query" | "analysis") {
+    if (!workspace || !result || savingRecord) return;
+    const title = window.prompt(kind === "query" ? "Name this saved query" : "Name this saved analysis");
+    if (!title?.trim()) return;
+    const token = getAccessToken();
+    if (!token) {
+      setError("Your session is missing. Please log in again.");
+      return;
+    }
+    setSavingRecord(true);
+    setError("");
+    try {
+      if (kind === "query") {
+        await workspaceExperienceApi.createSavedQuery(token, workspace.id, {
+          title: title.trim(),
+          question: question.trim() || null,
+          sql: multiMode ? toBackendMultiSql(sql) : sql,
+          datasetId: multiMode ? null : datasetId || null,
+        });
+      } else {
+        const datasetIds = multiMode
+          ? selectedReadyDatasets.map((dataset) => dataset.id)
+          : datasetId ? [datasetId] : [];
+        if (!datasetIds.length) {
+          setError("Select at least one dataset before saving an analysis.");
+          return;
+        }
+        await workspaceExperienceApi.createSavedAnalysis(token, workspace.id, {
+          title: title.trim(),
+          question: question.trim() || null,
+          sql: multiMode ? toBackendMultiSql(sql) : sql,
+          datasetIds,
+          resultSnapshot: result as unknown as Record<string, unknown>,
+        });
+      }
+      setInfo(kind === "query" ? "Query saved to your workspace." : "Analysis saved to your workspace.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not save this item.");
+    } finally {
+      setSavingRecord(false);
+    }
+  }
+
   // ==========================================
   // FOLLOW-UP HANDLER
   // ==========================================
@@ -5077,6 +5129,13 @@ export default function QueryWorkspacePage() {
 
           {result && (
             <div className="flex flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3">
+                <p className="text-[12px] font-semibold text-[var(--muted-strong)]">Save this result for later</p>
+                <div className="flex gap-2">
+                  <button type="button" disabled={savingRecord} onClick={() => void saveCurrentRecord("query")} className="rounded-lg border border-[var(--border-strong)] px-3 py-2 text-xs font-semibold text-[var(--text)] hover:bg-[var(--surface)] disabled:opacity-50">Save query</button>
+                  <button type="button" disabled={savingRecord} onClick={() => void saveCurrentRecord("analysis")} className="rounded-lg bg-indigo-500 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-400 disabled:opacity-50">Save analysis</button>
+                </div>
+              </div>
               <div className="flex items-center gap-6 border-b border-[var(--border)] bg-[var(--surface)] px-5 pt-2">
                 <button
                   type="button"

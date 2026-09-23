@@ -233,6 +233,104 @@ export interface DatasetPreview {
   executionTimeMs: number;
 }
 
+export interface SavedQuery {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  datasetId: string | null;
+  title: string;
+  description: string | null;
+  question: string | null;
+  sql: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedAnalysis {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  datasetIds: string[];
+  title: string;
+  description: string | null;
+  question: string | null;
+  sql: string;
+  resultSnapshot: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Report {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  title: string;
+  description: string | null;
+  savedAnalysisIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface QueryHistoryItem {
+  id: string;
+  datasetId: string;
+  conversationId: string | null;
+  question: string | null;
+  sql: string;
+  rowCount: number | null;
+  executionTimeMs: number | null;
+  status: "success" | "failed";
+  failureType: "validation" | "execution" | null;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+function workspacePath(workspaceId: string, resource: string) {
+  return `/workspaces/${encodeURIComponent(workspaceId)}/${resource}`;
+}
+
+export const workspaceExperienceApi = {
+  listSavedQueries(token: string, workspaceId: string) {
+    return apiFetch<SavedQuery[]>(workspacePath(workspaceId, "saved-queries"), { token });
+  },
+  createSavedQuery(token: string, workspaceId: string, input: Pick<SavedQuery, "title" | "sql"> & Partial<Pick<SavedQuery, "description" | "question" | "datasetId">>) {
+    return apiFetch<SavedQuery>(workspacePath(workspaceId, "saved-queries"), { token, method: "POST", body: JSON.stringify(input) });
+  },
+  updateSavedQuery(token: string, workspaceId: string, id: string, input: Partial<Pick<SavedQuery, "title" | "description" | "question" | "sql" | "datasetId">>) {
+    return apiFetch<SavedQuery>(workspacePath(workspaceId, `saved-queries/${encodeURIComponent(id)}`), { token, method: "PATCH", body: JSON.stringify(input) });
+  },
+  deleteSavedQuery(token: string, workspaceId: string, id: string) {
+    return apiFetch<void>(workspacePath(workspaceId, `saved-queries/${encodeURIComponent(id)}`), { token, method: "DELETE" });
+  },
+  listSavedAnalyses(token: string, workspaceId: string) {
+    return apiFetch<SavedAnalysis[]>(workspacePath(workspaceId, "saved-analyses"), { token });
+  },
+  createSavedAnalysis(token: string, workspaceId: string, input: Pick<SavedAnalysis, "title" | "sql" | "datasetIds" | "resultSnapshot"> & Partial<Pick<SavedAnalysis, "description" | "question">>) {
+    return apiFetch<SavedAnalysis>(workspacePath(workspaceId, "saved-analyses"), { token, method: "POST", body: JSON.stringify(input) });
+  },
+  updateSavedAnalysis(token: string, workspaceId: string, id: string, input: Partial<Pick<SavedAnalysis, "title" | "description" | "question" | "sql" | "datasetIds" | "resultSnapshot">>) {
+    return apiFetch<SavedAnalysis>(workspacePath(workspaceId, `saved-analyses/${encodeURIComponent(id)}`), { token, method: "PATCH", body: JSON.stringify(input) });
+  },
+  deleteSavedAnalysis(token: string, workspaceId: string, id: string) {
+    return apiFetch<void>(workspacePath(workspaceId, `saved-analyses/${encodeURIComponent(id)}`), { token, method: "DELETE" });
+  },
+  listReports(token: string, workspaceId: string) {
+    return apiFetch<Report[]>(workspacePath(workspaceId, "reports"), { token });
+  },
+  createReport(token: string, workspaceId: string, input: Pick<Report, "title" | "savedAnalysisIds"> & Partial<Pick<Report, "description">>) {
+    return apiFetch<Report>(workspacePath(workspaceId, "reports"), { token, method: "POST", body: JSON.stringify(input) });
+  },
+  updateReport(token: string, workspaceId: string, id: string, input: Partial<Pick<Report, "title" | "description" | "savedAnalysisIds">>) {
+    return apiFetch<Report>(workspacePath(workspaceId, `reports/${encodeURIComponent(id)}`), { token, method: "PATCH", body: JSON.stringify(input) });
+  },
+  deleteReport(token: string, workspaceId: string, id: string) {
+    return apiFetch<void>(workspacePath(workspaceId, `reports/${encodeURIComponent(id)}`), { token, method: "DELETE" });
+  },
+  listHistory(token: string, workspaceId: string) {
+    return apiFetch<QueryHistoryItem[]>(workspacePath(workspaceId, "query-history"), { token });
+  },
+};
+
 export const authApi = {
   async login(
     email: string,

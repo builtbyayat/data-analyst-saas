@@ -3820,3 +3820,34 @@ npm run build
 SUCCESS
 
 The complete query-result pipeline is now verified end-to-end.
+
+---
+
+## Milestone 4.1 — Workspace Experience UI
+
+Status
+
+COMPLETE — frontend integration implemented
+
+The workspace UI is connected to the saved-query, saved-analysis, report, and query-history APIs.
+
+Implemented:
+
+- Enabled Query Workspace and History navigation and added navigation for Saved Analyses, Saved Queries, and Reports.
+- Added workspace-scoped list pages with loading, empty, error, and refresh states.
+- Added saved-query and saved-analysis rename/delete actions.
+- Added report creation from one or more saved analyses, plus report rename/delete actions.
+- Added query-history rows with success/failure status, row count, duration, and error details.
+- Added editor links for saved queries, saved analyses, and history items; multi-dataset analysis IDs are restored for the editor.
+- Added Save Query and Save Analysis actions to query results. Analysis snapshots retain the result data and display a preview.
+- Kept the existing dataset upload, ingestion status, preview, and deletion flows intact; dataset access is linked throughout the workspace UI.
+
+Frontend verification:
+
+- `npm run build` — successful, including TypeScript and route generation.
+- Targeted ESLint for the new workspace component, API client, and dashboard shell — successful.
+- Full frontend ESLint still reports existing issues in unrelated pages and existing query-editor code; no new errors were reported in the workspace component/API/shell.
+
+Git checkpoint:
+
+- UI and documentation files are staged separately from the unrelated pre-existing backend work.
