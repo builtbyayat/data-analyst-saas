@@ -325,9 +325,11 @@ describe('SavedAnalysisService', () => {
   it('rejects invalid SQL', async () => {
     resetMocks();
 
-    sqlValidatorService.validate.mockReturnValue(
-      'SQL function is not allowed: READ_PARQUET',
-    );
+    sqlValidatorService.validate.mockImplementation(() => {
+      throw new BadRequestException(
+        'SQL function is not allowed: READ_PARQUET',
+      );
+    });
 
     await expect(
       service.createForUser(
@@ -605,9 +607,11 @@ describe('SavedAnalysisService', () => {
         },
       );
 
-    sqlValidatorService.validate.mockReturnValue(
-      'SQL statement type is not allowed',
-    );
+    sqlValidatorService.validate.mockImplementation(() => {
+      throw new BadRequestException(
+        'SQL statement type is not allowed',
+      );
+    });
 
     await expect(
       service.updateForUser(

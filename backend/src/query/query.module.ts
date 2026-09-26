@@ -69,6 +69,26 @@ import {
 } from './report.service.js';
 
 import {
+  ReportExportService,
+} from './report-export.service.js';
+
+import {
+  ReportPresentationService,
+} from './report-presentation.service.js';
+
+import {
+  ReportShareLink,
+} from './report-share.entity.js';
+
+import {
+  ReportShareService,
+} from './report-share.service.js';
+
+import {
+  ReportSharingController,
+} from './report-sharing.controller.js';
+
+import {
   ResultExportService,
 } from './result-export.service.js';
 
@@ -116,6 +136,8 @@ import {
       SavedAnalysis,
 
       Report,
+
+      ReportShareLink,
     ]),
 
     WorkspacesModule,
@@ -137,6 +159,8 @@ import {
     FastSqlController,
 
     FastAiQueryController,
+
+    ReportSharingController,
   ],
 
   providers: [
@@ -161,6 +185,12 @@ import {
     SavedAnalysisService,
 
     ReportService,
+
+    ReportPresentationService,
+
+    ReportShareService,
+
+    ReportExportService,
 
     SqlValidatorService,
 
@@ -195,6 +225,12 @@ import {
     SavedAnalysisService,
 
     ReportService,
+
+    ReportPresentationService,
+
+    ReportShareService,
+
+    ReportExportService,
 
     SqlValidatorService,
 
