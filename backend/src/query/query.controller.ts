@@ -1,10 +1,11 @@
-
 import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   Request,
@@ -32,8 +33,35 @@ import {
 } from './query.service.js';
 
 import {
+  ReportService,
+} from './report.service.js';
+
+import type {
+  CreateReportInput,
+  UpdateReportInput,
+} from './report.service.js';
+
+import {
   ResultExportService,
 } from './result-export.service.js';
+
+import {
+  SavedAnalysisService,
+} from './saved-analysis.service.js';
+
+import type {
+  CreateSavedAnalysisInput,
+  UpdateSavedAnalysisInput,
+} from './saved-analysis.service.js';
+
+import {
+  SavedQueryService,
+} from './saved-query.service.js';
+
+import type {
+  CreateSavedQueryInput,
+  UpdateSavedQueryInput,
+} from './saved-query.service.js';
 
 interface AuthenticatedRequest
   extends ExpressRequest {
@@ -118,11 +146,23 @@ export class QueryController {
   constructor(
     private readonly queryService: QueryService,
 
-    private readonly queryHistoryService: QueryHistoryService,
+    private readonly queryHistoryService:
+      QueryHistoryService,
 
-    private readonly workspaceAccessService: WorkspaceAccessService,
+    private readonly workspaceAccessService:
+      WorkspaceAccessService,
 
-    private readonly resultExportService: ResultExportService,
+    private readonly resultExportService:
+      ResultExportService,
+
+    private readonly savedQueryService:
+      SavedQueryService,
+
+    private readonly savedAnalysisService:
+      SavedAnalysisService,
+
+    private readonly reportService:
+      ReportService,
   ) {}
 
   // ==========================================
@@ -789,6 +829,659 @@ export class QueryController {
       jobId.trim(),
       workspaceId,
       userId,
+    );
+  }
+
+  // ==========================================
+  // SAVED QUERIES
+  // ==========================================
+
+  @Post(
+    'saved-queries',
+  )
+  async createSavedQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: CreateSavedQueryInput,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.savedQueryService.createForUser(
+      workspaceId,
+      userId,
+      body,
+    );
+  }
+
+  @Get(
+    'saved-queries',
+  )
+  async listSavedQueries(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Query('datasetId')
+    datasetId?: string,
+
+    @Query('limit')
+    limit?: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const parsedLimit =
+      limit !== undefined
+        ? Number(limit)
+        : 50;
+
+    return this.savedQueryService.listForUser(
+      workspaceId,
+      userId,
+      datasetId,
+      Number.isFinite(
+        parsedLimit,
+      )
+        ? parsedLimit
+        : 50,
+    );
+  }
+
+  @Get(
+    'saved-queries/:savedQueryId',
+  )
+  async getSavedQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('savedQueryId')
+    savedQueryId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!savedQueryId.trim()) {
+      throw new BadRequestException(
+        'Saved query ID is required',
+      );
+    }
+
+    return this.savedQueryService.getForUser(
+      workspaceId,
+      userId,
+      savedQueryId.trim(),
+    );
+  }
+
+  @Patch(
+    'saved-queries/:savedQueryId',
+  )
+  async updateSavedQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('savedQueryId')
+    savedQueryId: string,
+
+    @Body()
+    body: UpdateSavedQueryInput,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!savedQueryId.trim()) {
+      throw new BadRequestException(
+        'Saved query ID is required',
+      );
+    }
+
+    return this.savedQueryService.updateForUser(
+      workspaceId,
+      userId,
+      savedQueryId.trim(),
+      body,
+    );
+  }
+
+  @Delete(
+    'saved-queries/:savedQueryId',
+  )
+  async deleteSavedQuery(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('savedQueryId')
+    savedQueryId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ): Promise<void> {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!savedQueryId.trim()) {
+      throw new BadRequestException(
+        'Saved query ID is required',
+      );
+    }
+
+    await this.savedQueryService.removeForUser(
+      workspaceId,
+      userId,
+      savedQueryId.trim(),
+    );
+  }
+
+  // ==========================================
+  // SAVED ANALYSES
+  // ==========================================
+
+  @Post(
+    'saved-analyses',
+  )
+  async createSavedAnalysis(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: CreateSavedAnalysisInput,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.savedAnalysisService.createForUser(
+      workspaceId,
+      userId,
+      body,
+    );
+  }
+
+  @Get(
+    'saved-analyses',
+  )
+  async listSavedAnalyses(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Query('datasetId')
+    datasetId?: string,
+
+    @Query('limit')
+    limit?: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const parsedLimit =
+      limit !== undefined
+        ? Number(limit)
+        : 50;
+
+    return this.savedAnalysisService.listForUser(
+      workspaceId,
+      userId,
+      datasetId,
+      Number.isFinite(
+        parsedLimit,
+      )
+        ? parsedLimit
+        : 50,
+    );
+  }
+
+  @Get(
+    'saved-analyses/:savedAnalysisId',
+  )
+  async getSavedAnalysis(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('savedAnalysisId')
+    savedAnalysisId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!savedAnalysisId.trim()) {
+      throw new BadRequestException(
+        'Saved analysis ID is required',
+      );
+    }
+
+    return this.savedAnalysisService.getForUser(
+      workspaceId,
+      userId,
+      savedAnalysisId.trim(),
+    );
+  }
+
+  @Patch(
+    'saved-analyses/:savedAnalysisId',
+  )
+  async updateSavedAnalysis(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('savedAnalysisId')
+    savedAnalysisId: string,
+
+    @Body()
+    body: UpdateSavedAnalysisInput,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!savedAnalysisId.trim()) {
+      throw new BadRequestException(
+        'Saved analysis ID is required',
+      );
+    }
+
+    return this.savedAnalysisService.updateForUser(
+      workspaceId,
+      userId,
+      savedAnalysisId.trim(),
+      body,
+    );
+  }
+
+  @Delete(
+    'saved-analyses/:savedAnalysisId',
+  )
+  async deleteSavedAnalysis(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('savedAnalysisId')
+    savedAnalysisId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ): Promise<void> {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!savedAnalysisId.trim()) {
+      throw new BadRequestException(
+        'Saved analysis ID is required',
+      );
+    }
+
+    await this.savedAnalysisService.removeForUser(
+      workspaceId,
+      userId,
+      savedAnalysisId.trim(),
+    );
+  }
+
+  // ==========================================
+  // REPORTS
+  // ==========================================
+
+  @Post(
+    'reports',
+  )
+  async createReport(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Body()
+    body: CreateReportInput,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    return this.reportService.createForUser(
+      workspaceId,
+      userId,
+      body,
+    );
+  }
+
+  @Get(
+    'reports',
+  )
+  async listReports(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Query('limit')
+    limit?: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    const parsedLimit =
+      limit !== undefined
+        ? Number(limit)
+        : 50;
+
+    return this.reportService.listForUser(
+      workspaceId,
+      userId,
+      Number.isFinite(
+        parsedLimit,
+      )
+        ? parsedLimit
+        : 50,
+    );
+  }
+
+  @Get(
+    'reports/:reportId',
+  )
+  async getReport(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('reportId')
+    reportId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!reportId.trim()) {
+      throw new BadRequestException(
+        'Report ID is required',
+      );
+    }
+
+    return this.reportService.getForUser(
+      workspaceId,
+      userId,
+      reportId.trim(),
+    );
+  }
+
+  @Patch(
+    'reports/:reportId',
+  )
+  async updateReport(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('reportId')
+    reportId: string,
+
+    @Body()
+    body: UpdateReportInput,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ) {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!reportId.trim()) {
+      throw new BadRequestException(
+        'Report ID is required',
+      );
+    }
+
+    return this.reportService.updateForUser(
+      workspaceId,
+      userId,
+      reportId.trim(),
+      body,
+    );
+  }
+
+  @Delete(
+    'reports/:reportId',
+  )
+  async deleteReport(
+    @Param('workspaceId')
+    workspaceId: string,
+
+    @Param('reportId')
+    reportId: string,
+
+    @Request()
+    request?: AuthenticatedRequest,
+  ): Promise<void> {
+    const userId =
+      request?.user?.userId ??
+      request?.user?.id ??
+      request?.user?.sub;
+
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Authenticated user was not found',
+      );
+    }
+
+    await this.workspaceAccessService.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!reportId.trim()) {
+      throw new BadRequestException(
+        'Report ID is required',
+      );
+    }
+
+    await this.reportService.removeForUser(
+      workspaceId,
+      userId,
+      reportId.trim(),
     );
   }
 

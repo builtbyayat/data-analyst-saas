@@ -3972,15 +3972,86 @@ CONTEXT RULES:
         conversationId,
       );
 
-    const result =
-      await this.executeSqlForMultipleDatasets(
+    /*
+     * Natural-language multi-dataset requests use the
+     * fast execution path. The SQL is still validated and
+     * executed against every selected parquet relation, but
+     * expensive Python analytics and AI enrichment are
+     * intentionally skipped here. Those layers are not
+     * required to produce the primary result and were the
+     * main source of multi-minute waits.
+     */
+    const entries =
+      await this.getMultipleDatasetContexts(
         datasetIds,
         workspaceId,
-        userId,
+      );
+
+    const result =
+      await this.executeAgainstMultipleDatasets(
+        entries,
         generation.sql,
         generation.question,
-        conversationId,
+        false,
+        false,
       );
+
+    result.explanation =
+      `The multi-dataset query returned ${result.rowCount} row(s) across ${entries.length} selected datasets.`;
+
+    result.followUpQuestions =
+      this.buildDeterministicMultiDatasetFollowUps(
+        result.columns,
+        generation.question,
+      );
+
+    const normalizedConversationId =
+      conversationId?.trim() ||
+      null;
+
+    const normalizedQuestion =
+      generation.question?.trim() ||
+      null;
+
+    await Promise.all(
+      entries.map(
+        (entry) =>
+          this.queryHistoryRepository.save(
+            this.queryHistoryRepository.create({
+              workspaceId,
+
+              datasetId:
+                entry.dataset.id,
+
+              userId,
+
+              conversationId:
+                normalizedConversationId,
+
+              question:
+                normalizedQuestion,
+
+              sql:
+                result.sql,
+
+              rowCount:
+                result.rowCount,
+
+              executionTimeMs:
+                result.executionTimeMs,
+
+              status:
+                'success',
+
+              failureType:
+                null,
+
+              errorMessage:
+                null,
+            }),
+          ),
+      ),
+    );
 
     return {
       question:
@@ -3997,6 +4068,40 @@ CONTEXT RULES:
 
       result,
     };
+  }
+
+  private buildDeterministicMultiDatasetFollowUps(
+    columns: string[],
+    question: string,
+  ): string[] {
+    if (!columns.length) {
+      return [];
+    }
+
+    const firstColumn =
+      columns[0]!;
+
+    const secondColumn =
+      columns[1];
+
+    const suggestions = [
+      `Can you break this result down by ${firstColumn}?`,
+      secondColumn
+        ? `Can you compare ${firstColumn} and ${secondColumn}?`
+        : `Can you sort the result by ${firstColumn}?`,
+      `Can you show the top values for ${firstColumn}?`,
+    ];
+
+    const normalizedQuestion =
+      question.trim().toLocaleLowerCase();
+
+    return suggestions
+      .filter(
+        (item) =>
+          item.trim().toLocaleLowerCase() !==
+          normalizedQuestion,
+      )
+      .slice(0, 3);
   }
 
   // ==========================================

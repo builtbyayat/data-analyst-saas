@@ -11,7 +11,9 @@ import type {
 } from "react";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import {
+  usePathname,
+} from "next/navigation";
 
 interface DashboardShellProps {
   children: ReactNode;
@@ -44,6 +46,7 @@ function IconGrid({
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <rect
         x="14"
         y="3"
@@ -53,6 +56,7 @@ function IconGrid({
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <rect
         x="3"
         y="14"
@@ -62,6 +66,7 @@ function IconGrid({
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <rect
         x="14"
         y="14"
@@ -96,11 +101,13 @@ function IconDatabase({
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <path
         d="M4 5V12C4 13.657 7.582 15 12 15C16.418 15 20 13.657 20 12V5"
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <path
         d="M4 12V19C4 20.657 7.582 22 12 22C16.418 22 20 20.657 20 19V12"
         stroke="currentColor"
@@ -130,6 +137,7 @@ function IconSearch({
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <path
         d="M16 16L21 21"
         stroke="currentColor"
@@ -159,6 +167,7 @@ function IconHistory({
         strokeWidth={strokeWidth}
         strokeLinecap="round"
       />
+
       <path
         d="M3 4V9H8"
         stroke="currentColor"
@@ -166,6 +175,7 @@ function IconHistory({
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+
       <path
         d="M12 7V12L15.5 14"
         stroke="currentColor"
@@ -195,6 +205,7 @@ function IconSettings({
         stroke="currentColor"
         strokeWidth={strokeWidth}
       />
+
       <path
         d="M19.4 15A1.8 1.8 0 0 0 19.76 16.98L19.83 17.05L17.05 19.83L16.98 19.76A1.8 1.8 0 0 0 15 19.4A1.8 1.8 0 0 0 13.9 21V21.1H10.1V21A1.8 1.8 0 0 0 9 19.4A1.8 1.8 0 0 0 7.02 19.76L6.95 19.83L4.17 17.05L4.24 16.98A1.8 1.8 0 0 0 4.6 15A1.8 1.8 0 0 0 3 13.9H2.9V10.1H3A1.8 1.8 0 0 0 4.6 9A1.8 1.8 0 0 0 4.24 7.02L4.17 6.95L6.95 4.17L7.02 4.24A1.8 1.8 0 0 0 9 4.6A1.8 1.8 0 0 0 10.1 3V2.9H13.9V3A1.8 1.8 0 0 0 15 4.6A1.8 1.8 0 0 0 16.98 4.24L17.05 4.17L19.83 6.95L19.76 7.02A1.8 1.8 0 0 0 19.4 9A1.8 1.8 0 0 0 21 10.1H21.1V13.9H21A1.8 1.8 0 0 0 19.4 15Z"
         stroke="currentColor"
@@ -224,11 +235,51 @@ function IconSparkles({
         strokeWidth={strokeWidth}
         strokeLinejoin="round"
       />
+
       <path
         d="M19 16L19.7 18.3L22 19L19.7 19.7L19 22L18.3 19.7L16 19L18.3 18.3L19 16Z"
         stroke="currentColor"
         strokeWidth={strokeWidth}
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function IconCreditCard({
+  size = 20,
+  strokeWidth = 1.8,
+}: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <rect
+        x="3"
+        y="5"
+        width="18"
+        height="14"
+        rx="2.5"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+      />
+
+      <path
+        d="M3 9H21"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+      />
+
+      <path
+        d="M7 15H11"
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
       />
     </svg>
   );
@@ -252,12 +303,14 @@ function IconMenu({
         strokeWidth="1.8"
         strokeLinecap="round"
       />
+
       <path
         d="M4 12H20"
         stroke="currentColor"
         strokeWidth="1.8"
         strokeLinecap="round"
       />
+
       <path
         d="M4 17H20"
         stroke="currentColor"
@@ -341,12 +394,19 @@ const navigation: NavigationItem[] = [
     available: true,
     icon: IconHistory,
   },
+  {
+    label: "Billing",
+    href: "/dashboard/billing",
+    available: true,
+    icon: IconCreditCard,
+  },
 ];
 
 export default function DashboardShell({
   children,
 }: DashboardShellProps) {
-  const pathname = usePathname();
+  const pathname =
+    usePathname();
 
   const [
     sidebarOpen,
@@ -393,9 +453,42 @@ export default function DashboardShell({
 
     return (
       pathname === item.href ||
-      pathname.startsWith(`${item.href}/`)
+      pathname.startsWith(
+        `${item.href}/`,
+      )
     );
   };
+
+  const pageTitle =
+    pathname.startsWith(
+      "/dashboard/datasets",
+    )
+      ? "Datasets"
+      : pathname.startsWith(
+            "/dashboard/query",
+          )
+        ? "Query workspace"
+        : pathname.startsWith(
+              "/dashboard/saved-analyses",
+            )
+          ? "Saved analyses"
+          : pathname.startsWith(
+                "/dashboard/saved-queries",
+              )
+            ? "Saved queries"
+            : pathname.startsWith(
+                  "/dashboard/reports",
+                )
+              ? "Reports"
+              : pathname.startsWith(
+                    "/dashboard/history",
+                  )
+                ? "History"
+                : pathname.startsWith(
+                      "/dashboard/billing",
+                    )
+                  ? "Billing"
+                  : "Overview";
 
   return (
     <div className="min-h-screen bg-[#07090d] text-white">
@@ -474,20 +567,74 @@ export default function DashboardShell({
           )}
 
           <nav className="space-y-1">
-            {navigation.map((item) => {
-              const Icon = item.icon;
-              const active =
-                isNavigationActive(item);
+            {navigation.map(
+              (item) => {
+                const Icon =
+                  item.icon;
 
-              if (!item.available) {
+                const active =
+                  isNavigationActive(
+                    item,
+                  );
+
+                if (
+                  !item.available
+                ) {
+                  return (
+                    <button
+                      key={
+                        item.label
+                      }
+                      type="button"
+                      disabled
+                      title={`${item.label} — coming next`}
+                      className={[
+                        "group flex w-full cursor-not-allowed items-center rounded-xl px-3 py-3 text-left text-white/25",
+                        sidebarCollapsed
+                          ? "justify-center"
+                          : "gap-3",
+                      ].join(" ")}
+                    >
+                      <Icon size={19} />
+
+                      {!sidebarCollapsed && (
+                        <>
+                          <span className="flex-1 text-[13px] font-medium">
+                            {
+                              item.label
+                            }
+                          </span>
+
+                          <span className="rounded-full border border-white/[0.08] px-2 py-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
+                            Soon
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                }
+
                 return (
-                  <button
-                    key={item.label}
-                    type="button"
-                    disabled
-                    title={`${item.label} — coming next`}
+                  <Link
+                    key={
+                      item.label
+                    }
+                    href={
+                      item.href
+                    }
+                    onClick={() =>
+                      setSidebarOpen(
+                        false,
+                      )
+                    }
+                    title={
+                      item.label
+                    }
                     className={[
-                      "group flex w-full cursor-not-allowed items-center rounded-xl px-3 py-3 text-left text-white/25",
+                      "group flex w-full items-center rounded-xl px-3 py-3 text-left transition",
+                      active
+                        ? "bg-white/[0.07] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+                        : "text-white/50 hover:bg-white/[0.04] hover:text-white",
                       sidebarCollapsed
                         ? "justify-center"
                         : "gap-3",
@@ -496,56 +643,67 @@ export default function DashboardShell({
                     <Icon size={19} />
 
                     {!sidebarCollapsed && (
-                      <>
-                        <span className="flex-1 text-[13px] font-medium">
-                          {item.label}
-                        </span>
-
-                        <span className="rounded-full border border-white/[0.08] px-2 py-0.5 text-[9px] uppercase tracking-[0.12em] text-white/25">
-                          Soon
-                        </span>
-                      </>
+                      <span className="flex-1 text-[13px] font-medium">
+                        {
+                          item.label
+                        }
+                      </span>
                     )}
-                  </button>
+                  </Link>
                 );
-              }
-
-              return (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  onClick={() => setSidebarOpen(false)}
-                  title={item.label}
-                  className={[
-                    "group flex w-full items-center rounded-xl px-3 py-3 text-left transition",
-                    active
-                      ? "bg-white/[0.07] text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-                      : "text-white/50 hover:bg-white/[0.04] hover:text-white",
-                    sidebarCollapsed
-                      ? "justify-center"
-                      : "gap-3",
-                  ].join(" ")}
-                >
-                  <Icon size={19} />
-
-                  {!sidebarCollapsed && (
-                    <span className="flex-1 text-[13px] font-medium">
-                      {item.label}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
+              },
+            )}
           </nav>
         </div>
 
         <div className="border-t border-white/[0.06] p-3">
+          <Link
+            href="/dashboard/billing"
+            className={[
+              "flex w-full items-center rounded-xl px-3 py-3 transition",
+              pathname.startsWith(
+                "/dashboard/billing",
+              )
+                ? "bg-white/[0.07] text-white"
+                : "text-white/40 hover:bg-white/[0.04] hover:text-white",
+              sidebarCollapsed
+                ? "justify-center"
+                : "gap-3",
+            ].join(" ")}
+          >
+            <IconCreditCard size={19} />
+
+            {!sidebarCollapsed && (
+              <span className="text-[13px] font-medium">
+                Plan & billing
+              </span>
+            )}
+          </Link>
+
+          {!sidebarCollapsed && (
+            <div className="mt-2 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
+                Current plan
+              </p>
+
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-sm font-medium">
+                  Free workspace
+                </span>
+
+                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-white/40">
+                  V1
+                </span>
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             disabled
             title="Settings will be added later"
             className={[
-              "flex w-full cursor-not-allowed items-center rounded-xl px-3 py-3 text-white/25",
+              "mt-2 flex w-full cursor-not-allowed items-center rounded-xl px-3 py-3 text-white/25",
               sidebarCollapsed
                 ? "justify-center"
                 : "gap-3",
@@ -559,24 +717,6 @@ export default function DashboardShell({
               </span>
             )}
           </button>
-
-          {!sidebarCollapsed && (
-            <div className="mt-2 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/25">
-                Current plan
-              </p>
-
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-sm font-medium">
-                  Free workspace
-                </span>
-
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.1em] text-white/40">
-                  V1
-                </span>
-              </div>
-            </div>
-          )}
         </div>
       </aside>
 
@@ -607,11 +747,7 @@ export default function DashboardShell({
               </p>
 
               <h1 className="truncate text-sm font-semibold text-white/90">
-                {pathname.startsWith(
-                  "/dashboard/datasets",
-                )
-                  ? "Datasets"
-                  : "Overview"}
+                {pageTitle}
               </h1>
             </div>
 

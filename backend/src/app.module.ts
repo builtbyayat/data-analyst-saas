@@ -1,20 +1,32 @@
 import { Module } from '@nestjs/common';
+
 import {
   ConfigModule,
   ConfigService,
 } from '@nestjs/config';
+
 import { TypeOrmModule } from '@nestjs/typeorm';
+
 import { BullModule } from '@nestjs/bullmq';
 
 import { AuthModule } from './auth/auth.module.js';
+
 import { UsersModule } from './users/users.module.js';
+
 import { WorkspacesModule } from './workspaces/workspaces.module.js';
+
 import { DatasetsModule } from './datasets/datasets.module.js';
+
 import { StorageModule } from './storage/storage.module.js';
+
 import { QueryModule } from './query/query.module.js';
+
 import { AiModule } from './ai/ai.module.js';
 
+import { BillingModule } from './billing/billing.module.js';
+
 import { AppController } from './app.controller.js';
+
 import { AppService } from './app.service.js';
 
 @Module({
@@ -24,16 +36,19 @@ import { AppService } from './app.service.js';
     }),
 
     TypeOrmModule.forRootAsync({
-      inject: [ConfigService],
+      inject: [
+        ConfigService,
+      ],
 
       useFactory: (
         configService: ConfigService,
       ) => ({
         type: 'postgres',
 
-        host: configService.get<string>(
-          'DATABASE_HOST',
-        ),
+        host:
+          configService.get<string>(
+            'DATABASE_HOST',
+          ),
 
         port: Number(
           configService.get<string>(
@@ -64,9 +79,13 @@ import { AppService } from './app.service.js';
     }),
 
     BullModule.forRootAsync({
-      imports: [ConfigModule],
+      imports: [
+        ConfigModule,
+      ],
 
-      inject: [ConfigService],
+      inject: [
+        ConfigService,
+      ],
 
       useFactory: (
         configService: ConfigService,
@@ -92,6 +111,7 @@ import { AppService } from './app.service.js';
       {
         name: 'analysis',
       },
+
       {
         name: 'dataset_ingestion',
       },
@@ -110,6 +130,8 @@ import { AppService } from './app.service.js';
     QueryModule,
 
     AiModule,
+
+    BillingModule,
   ],
 
   controllers: [

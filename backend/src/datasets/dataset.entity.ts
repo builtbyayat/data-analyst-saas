@@ -10,6 +10,7 @@ import {
 } from 'typeorm';
 
 import type { Workspace } from '../workspaces/workspace.entity.js';
+
 import { DatasetColumn } from './dataset-column.entity.js';
 
 @Entity('datasets')
@@ -17,16 +18,24 @@ export class Dataset {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Column({ type: 'uuid' })
+  @Column({
+    type: 'uuid',
+  })
   workspaceId!: string;
 
-  @Column({ type: 'varchar' })
+  @Column({
+    type: 'varchar',
+  })
   name!: string;
 
-  @Column({ type: 'varchar' })
+  @Column({
+    type: 'varchar',
+  })
   originalFilename!: string;
 
-  @Column({ type: 'varchar' })
+  @Column({
+    type: 'varchar',
+  })
   objectKey!: string;
 
   @Column({
@@ -35,20 +44,44 @@ export class Dataset {
   })
   queryObjectKey!: string | null;
 
-  @Column({ type: 'varchar' })
+  @Column({
+    type: 'varchar',
+  })
   fileType!: string;
 
-  @Column({ type: 'bigint' })
+  @Column({
+    type: 'bigint',
+  })
   fileSize!: string;
 
-  @Column({ type: 'integer', default: 0 })
+  @Column({
+    type: 'varchar',
+    length: 64,
+    nullable: true,
+  })
+  contentHash!: string | null;
+
+  @Column({
+    type: 'integer',
+    default: 0,
+  })
   rowCount!: number;
 
-  @Column({ type: 'integer', default: 0 })
+  @Column({
+    type: 'integer',
+    default: 0,
+  })
   columnCount!: number;
 
-  @Column({ type: 'varchar', default: 'pending' })
-  status!: 'pending' | 'processing' | 'ready' | 'failed';
+  @Column({
+    type: 'varchar',
+    default: 'pending',
+  })
+  status!:
+    | 'pending'
+    | 'processing'
+    | 'ready'
+    | 'failed';
 
   @OneToMany(
     () => DatasetColumn,
@@ -56,10 +89,15 @@ export class Dataset {
   )
   columns!: DatasetColumn[];
 
-  @ManyToOne('Workspace', {
-    onDelete: 'CASCADE',
+  @ManyToOne(
+    'Workspace',
+    {
+      onDelete: 'CASCADE',
+    },
+  )
+  @JoinColumn({
+    name: 'workspaceId',
   })
-  @JoinColumn({ name: 'workspaceId' })
   workspace!: Workspace;
 
   @CreateDateColumn()

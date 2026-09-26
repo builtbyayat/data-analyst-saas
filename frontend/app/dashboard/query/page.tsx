@@ -4699,7 +4699,7 @@ export default function QueryWorkspacePage() {
             {/* ==========================================
                 SCHEMA
             ========================================== */}
-            <div className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-inner">
+            <div className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-inner max-h-[400px]">
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--muted)]">
                 {multiMode
                   ? "Selected Schemas"
@@ -4707,7 +4707,7 @@ export default function QueryWorkspacePage() {
               </p>
 
               {multiMode ? (
-                <div className="custom-scrollbar mt-4 max-h-[360px] space-y-4 overflow-y-auto">
+                <div className="custom-scrollbar mt-4 max-h-[400px] space-y-4 overflow-y-auto">
                   {selectedReadyDatasets.map(
                     (item) => {
                       const selectedContext =
@@ -4786,7 +4786,7 @@ export default function QueryWorkspacePage() {
                   )}
                 </div>
               ) : (
-                <div className="custom-scrollbar mt-4 flex max-h-[auto] flex-col gap-2 overflow-y-auto">
+                <div className="custom-scrollbar mt-4 flex max-h-[360px] flex-col gap-2 overflow-y-auto">
                   {columnNames.length >
                   0 ? (
                     columnNames.map(

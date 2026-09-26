@@ -1,13 +1,24 @@
 import { Module } from '@nestjs/common';
+
 import { TypeOrmModule } from '@nestjs/typeorm';
+
 import { BullModule } from '@nestjs/bullmq';
 
 import { Dataset } from './dataset.entity.js';
+
 import { DatasetColumn } from './dataset-column.entity.js';
-import { DatasetsService } from './datasets.service.js';
-import { DatasetsController } from './datasets.controller.js';
+
+import {
+  DatasetsService,
+} from './datasets.service.js';
+
+import {
+  DatasetsController,
+} from './datasets.controller.js';
 
 import { WorkspacesModule } from '../workspaces/workspaces.module.js';
+
+import { BillingModule } from '../billing/billing.module.js';
 
 @Module({
   imports: [
@@ -21,6 +32,8 @@ import { WorkspacesModule } from '../workspaces/workspaces.module.js';
     }),
 
     WorkspacesModule,
+
+    BillingModule,
   ],
 
   controllers: [
