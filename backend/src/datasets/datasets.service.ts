@@ -128,6 +128,35 @@ export class DatasetsService {
     });
   }
 
+  async findExecutionMetadata(
+    datasetId: string,
+    workspaceId: string,
+  ): Promise<Pick<Dataset, 'id' | 'workspaceId' | 'name' | 'queryObjectKey' | 'status' | 'updatedAt'>> {
+    const dataset =
+      await this.datasetRepository.findOne({
+        where: {
+          id: datasetId,
+          workspaceId,
+        },
+        select: {
+          id: true,
+          workspaceId: true,
+          name: true,
+          queryObjectKey: true,
+          status: true,
+          updatedAt: true,
+        },
+      });
+
+    if (!dataset) {
+      throw new NotFoundException(
+        'Dataset not found',
+      );
+    }
+
+    return dataset;
+  }
+
   async getAnalysisContext(
     datasetId: string,
     workspaceId: string,

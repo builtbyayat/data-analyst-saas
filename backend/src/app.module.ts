@@ -27,6 +27,14 @@ import { BillingModule } from './billing/billing.module.js';
 
 import { SecurityModule } from './security/security.module.js';
 
+import { PerformanceModule } from './performance/performance.module.js';
+
+import { ObservabilityModule } from './observability/observability.module.js';
+
+import { HealthModule } from './health/health.module.js';
+
+import { getPostgresPoolConfig } from './performance/pool-config.js';
+
 import { AppController } from './app.controller.js';
 
 import { AppService } from './app.service.js';
@@ -77,6 +85,8 @@ import { AppService } from './app.service.js';
         autoLoadEntities: true,
 
         synchronize: false,
+
+        extra: getPostgresPoolConfig(),
       }),
     }),
 
@@ -136,6 +146,12 @@ import { AppService } from './app.service.js';
     BillingModule,
 
     SecurityModule,
+
+    PerformanceModule,
+
+    ObservabilityModule,
+
+    HealthModule,
   ],
 
   controllers: [

@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import type { Request, Response, NextFunction } from 'express';
 import { AppModule } from './app.module.js';
+import { StructuredLoggerService } from './observability/structured-logger.service.js';
 
 function parseAllowedOrigins(): string[] {
   const configured =
@@ -66,6 +67,11 @@ async function bootstrap() {
         rawBody: true,
       },
     );
+
+  const structuredLogger =
+    app.get(StructuredLoggerService);
+
+  app.useLogger(structuredLogger);
 
   app.use(
     applySecurityHeaders,

@@ -46,6 +46,9 @@ import {
   PlanUsageService,
 } from '../billing/plan-usage.service.js';
 
+import { QueryCacheService } from '../performance/query-cache.service.js';
+import { MetricsService } from '../observability/metrics.service.js';
+
 export interface FastSqlQueryResult {
   sql: string;
 
@@ -118,6 +121,12 @@ export class FastSqlService {
 
     private readonly planUsageService:
       PlanUsageService,
+
+    private readonly queryCacheService:
+      QueryCacheService,
+
+    private readonly metricsService:
+      MetricsService,
   ) {}
 
   async execute(
@@ -157,7 +166,7 @@ export class FastSqlService {
 
     try {
       const dataset =
-        await this.datasetsService.findById(
+        await this.datasetsService.findExecutionMetadata(
           datasetId,
           workspaceId,
         );
@@ -174,6 +183,79 @@ export class FastSqlService {
         this.sqlValidatorService.validate(
           normalizedSql,
         );
+
+      const datasetVersion =
+        dataset.updatedAt instanceof Date
+          ? dataset.updatedAt.toISOString()
+          : String(dataset.updatedAt);
+
+      const cachedResult =
+        await this.queryCacheService.get(
+          workspaceId,
+          datasetId,
+          datasetVersion,
+          validatedSql,
+        );
+
+      if (cachedResult) {
+        this.metricsService.increment(
+          'query.cache.hit.total',
+        );
+        const rows =
+          cachedResult.rows;
+
+        const summary =
+          this.resultSummaryService.summarize(
+            cachedResult.columns,
+            rows,
+          );
+
+        const visualization =
+          this.resultVisualizationService.analyze(
+            cachedResult.columns,
+            rows,
+            question?.trim() ||
+              null,
+          );
+
+        await this.saveHistory({
+          workspaceId,
+          datasetId,
+          userId,
+          conversationId:
+            conversationId?.trim() ||
+            null,
+          question:
+            question?.trim() ||
+            null,
+          sql: validatedSql,
+          rowCount: rows.length,
+          executionTimeMs:
+            Date.now() - startedAt,
+          status: 'success',
+          failureType: null,
+          errorMessage: null,
+        });
+
+        return {
+          sql: validatedSql,
+          columns: cachedResult.columns,
+          rows,
+          rowCount: rows.length,
+          truncated: false,
+          executionTimeMs: 0,
+          summary,
+          visualization,
+          explanation: null,
+          aiInsights: null,
+          analytics: null,
+          followUpQuestions: [],
+        };
+      }
+
+      this.metricsService.increment(
+        'query.cache.miss.total',
+      );
 
       failureType =
         'execution';
@@ -216,6 +298,11 @@ export class FastSqlService {
           Date.now() -
           queryStartedAt;
 
+        this.metricsService.observe(
+          'query.fast_sql.duckdb_duration_ms',
+          executionTimeMs,
+        );
+
         const truncated =
           result.rows.length >
           this.maxResultRows;
@@ -245,6 +332,25 @@ export class FastSqlService {
         const totalRequestTimeMs =
           Date.now() -
           startedAt;
+
+        const cacheStored =
+          !truncated &&
+          (await this.queryCacheService.set(
+            workspaceId,
+            datasetId,
+            datasetVersion,
+            validatedSql,
+            {
+              columns: result.columns,
+              rows,
+            },
+          ));
+
+        if (cacheStored) {
+          this.metricsService.increment(
+            'query.cache.write.total',
+          );
+        }
 
         await this.saveHistory(
           {

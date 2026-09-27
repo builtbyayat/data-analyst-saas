@@ -39,6 +39,10 @@ import {
 import { Dataset } from './datasets/dataset.entity.js';
 import { DatasetColumn } from './datasets/dataset-column.entity.js';
 
+import { StructuredLoggerService } from './observability/structured-logger.service.js';
+
+const logger = new StructuredLoggerService();
+
 /* -------------------------------------------------------------------------- */
 /*                              Worker config                                 */
 /* -------------------------------------------------------------------------- */
@@ -834,7 +838,7 @@ async function processDataset(
       },
     );
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Reading object: ${dataset.objectKey}`,
     );
 
@@ -843,7 +847,7 @@ async function processDataset(
         dataset.objectKey,
       );
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Downloaded ${buffer.length} bytes`,
     );
 
@@ -868,15 +872,15 @@ async function processDataset(
           )
         : [];
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Rows: ${records.length}`,
     );
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Columns: ${columnNames.length}`,
     );
 
-    console.log(
+    logger.log(
       '[dataset_ingestion] Column names:',
       columnNames,
     );
@@ -958,7 +962,7 @@ async function processDataset(
       );
     }
 
-    console.log(
+    logger.log(
       '[dataset_ingestion] Generating Parquet file',
     );
 
@@ -968,7 +972,7 @@ async function processDataset(
         columnNames,
       );
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Generated Parquet: ${parquetBuffer.length} bytes`,
     );
 
@@ -988,7 +992,7 @@ async function processDataset(
       'application/vnd.apache.parquet',
     );
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Uploaded query object: ${queryObjectKey}`,
     );
 
@@ -1025,7 +1029,7 @@ async function processDataset(
       );
     }
 
-    console.log(
+    logger.log(
       `[dataset_ingestion] Dataset ${dataset.id} is ready`,
     );
 
@@ -1231,12 +1235,12 @@ async function cleanupQueue(
       completedRemoved.length > 0 ||
       failedRemoved.length > 0
     ) {
-      console.log(
+      logger.log(
         `[${queueName}] Cleanup removed ${completedRemoved.length} completed and ${failedRemoved.length} failed jobs`,
       );
     }
   } catch (error) {
-    console.error(
+    logger.error(
       `[${queueName}] Job cleanup failed:`,
       error,
     );
@@ -1265,7 +1269,7 @@ function registerAnalysisWorkerEvents(
   worker.on(
     'active',
     (job) => {
-      console.log(
+      logger.log(
         `[analysis] Job ${job.id} is active`,
       );
     },
@@ -1274,7 +1278,7 @@ function registerAnalysisWorkerEvents(
   worker.on(
     'completed',
     (job) => {
-      console.log(
+      logger.log(
         `[analysis] Job ${job.id} completed`,
       );
     },
@@ -1283,7 +1287,7 @@ function registerAnalysisWorkerEvents(
   worker.on(
     'failed',
     (job, error) => {
-      console.error(
+      logger.error(
         `[analysis] Job ${job?.id} failed:`,
         error,
       );
@@ -1293,7 +1297,7 @@ function registerAnalysisWorkerEvents(
   worker.on(
     'stalled',
     (jobId) => {
-      console.warn(
+      logger.warn(
         `[analysis] Job ${jobId} stalled and will be retried by BullMQ`,
       );
     },
@@ -1302,7 +1306,7 @@ function registerAnalysisWorkerEvents(
   worker.on(
     'error',
     (error) => {
-      console.error(
+      logger.error(
         '[analysis] Worker error:',
         error,
       );
@@ -1316,7 +1320,7 @@ function registerDatasetIngestionWorkerEvents(
   worker.on(
     'active',
     (job) => {
-      console.log(
+      logger.log(
         `[dataset_ingestion] Job ${job.id} is active`,
       );
     },
@@ -1325,7 +1329,7 @@ function registerDatasetIngestionWorkerEvents(
   worker.on(
     'completed',
     (job) => {
-      console.log(
+      logger.log(
         `[dataset_ingestion] Job ${job.id} completed`,
       );
     },
@@ -1334,7 +1338,7 @@ function registerDatasetIngestionWorkerEvents(
   worker.on(
     'failed',
     (job, error) => {
-      console.error(
+      logger.error(
         `[dataset_ingestion] Job ${job?.id} failed:`,
         error,
       );
@@ -1344,7 +1348,7 @@ function registerDatasetIngestionWorkerEvents(
   worker.on(
     'stalled',
     (jobId) => {
-      console.warn(
+      logger.warn(
         `[dataset_ingestion] Job ${jobId} stalled and will be retried by BullMQ`,
       );
     },
@@ -1353,7 +1357,7 @@ function registerDatasetIngestionWorkerEvents(
   worker.on(
     'error',
     (error) => {
-      console.error(
+      logger.error(
         '[dataset_ingestion] Worker error:',
         error,
       );
@@ -1400,11 +1404,11 @@ async function bootstrapWorkers(): Promise<void> {
     new Worker<AnalysisJobData>(
       'analysis',
       async (job) => {
-        console.log(
+        logger.log(
           `[analysis] Processing job ${job.id}`,
         );
 
-        console.log(
+        logger.log(
           '[analysis] Job data:',
           job.data,
         );
@@ -1494,7 +1498,7 @@ async function bootstrapWorkers(): Promise<void> {
             workspaceId?: string;
           };
 
-        console.log(
+        logger.log(
           `[dataset_ingestion] Processing job ${job.id}`,
         );
 
@@ -1555,51 +1559,51 @@ async function bootstrapWorkers(): Promise<void> {
 
   await runCleanup();
 
-  console.log(
+  logger.log(
     'Analysis worker started',
   );
 
-  console.log(
+  logger.log(
     `Analysis worker concurrency: ${analysisConcurrency}`,
   );
 
-  console.log(
+  logger.log(
     `Analysis job timeout: ${analysisJobTimeoutMs}ms`,
   );
 
-  console.log(
+  logger.log(
     'Dataset ingestion worker started',
   );
 
-  console.log(
+  logger.log(
     `Dataset ingestion worker concurrency: ${datasetIngestionConcurrency}`,
   );
 
-  console.log(
+  logger.log(
     `Dataset ingestion job timeout: ${datasetIngestionJobTimeoutMs}ms`,
   );
 
-  console.log(
+  logger.log(
     `BullMQ cleanup interval: ${cleanupIntervalMs}ms`,
   );
 
-  console.log(
+  logger.log(
     `BullMQ completed-job grace: ${completedJobCleanupGraceMs}ms`,
   );
 
-  console.log(
+  logger.log(
     `BullMQ failed-job grace: ${failedJobCleanupGraceMs}ms`,
   );
 
-  console.log(
+  logger.log(
     `BullMQ stalled interval: ${stalledIntervalMs}ms`,
   );
 
-  console.log(
+  logger.log(
     `BullMQ max stalled count: ${maxStalledCount}`,
   );
 
-  console.log(
+  logger.log(
     `BullMQ lock duration: ${lockDurationMs}ms`,
   );
 }
@@ -1617,7 +1621,7 @@ async function shutdown(
 
   shuttingDown = true;
 
-  console.log(
+  logger.log(
     `Received ${signal}. Shutting down workers...`,
   );
 
@@ -1661,11 +1665,11 @@ async function shutdown(
       applicationContext = null;
     }
 
-    console.log(
+    logger.log(
       'Workers shut down cleanly',
     );
   } catch (error) {
-    console.error(
+    logger.error(
       'Worker shutdown failed:',
       error,
     );
@@ -1699,7 +1703,7 @@ process.once(
 process.once(
   'uncaughtException',
   (error) => {
-    console.error(
+    logger.error(
       'Uncaught exception in worker process:',
       error,
     );
@@ -1713,7 +1717,7 @@ process.once(
 process.once(
   'unhandledRejection',
   (reason) => {
-    console.error(
+    logger.error(
       'Unhandled rejection in worker process:',
       reason,
     );
@@ -1731,7 +1735,7 @@ process.once(
 try {
   await bootstrapWorkers();
 } catch (error) {
-  console.error(
+  logger.error(
     'Worker startup failed:',
     error,
   );

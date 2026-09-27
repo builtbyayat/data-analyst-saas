@@ -32,6 +32,8 @@ import { WorkspaceSubscription } from './billing/workspace-subscription.entity.j
 
 import { BillingWebhookEvent } from './billing/billing-webhook-event.entity.js';
 
+import { getPostgresPoolConfig } from './performance/pool-config.js';
+
 const dataSource =
   new DataSource({
     type: 'postgres',
@@ -92,6 +94,8 @@ const dataSource =
     ],
 
     synchronize: false,
+
+    extra: getPostgresPoolConfig(),
   });
 
 export default dataSource;

@@ -2,6 +2,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Index,
   JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
@@ -12,6 +13,14 @@ import type { Workspace } from '../workspaces/workspace.entity.js';
 import type { Dataset } from '../datasets/dataset.entity.js';
 
 @Entity('query_history')
+@Index(
+  'IDX_query_history_workspace_user_created_at',
+  ['workspaceId', 'userId', 'createdAt'],
+)
+@Index(
+  'IDX_query_history_workspace_dataset_created_at',
+  ['workspaceId', 'datasetId', 'createdAt'],
+)
 export class QueryHistory {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
