@@ -10,11 +10,13 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 
 import { BillingService } from './billing.service.js';
+import { WorkspaceAccessService } from '../workspaces/workspace-access.service.js';
 
 @Controller('workspaces')
 export class BillingController {
   constructor(
     private readonly billingService: BillingService,
+    private readonly workspaceAccessService: WorkspaceAccessService,
   ) {}
 
   @UseGuards(
@@ -59,6 +61,11 @@ export class BillingController {
     )
     workspaceId: string,
   ) {
+    await this.workspaceAccessService.requireAdmin(
+      request.user.id,
+      workspaceId,
+    );
+
     return this.billingService.createProSubscription(
       request.user.id,
       workspaceId,
@@ -84,6 +91,11 @@ export class BillingController {
     )
     workspaceId: string,
   ) {
+    await this.workspaceAccessService.requireAdmin(
+      request.user.id,
+      workspaceId,
+    );
+
     return this.billingService.cancelProSubscription(
       request.user.id,
       workspaceId,

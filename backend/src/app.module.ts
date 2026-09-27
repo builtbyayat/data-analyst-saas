@@ -25,6 +25,8 @@ import { AiModule } from './ai/ai.module.js';
 
 import { BillingModule } from './billing/billing.module.js';
 
+import { SecurityModule } from './security/security.module.js';
+
 import { AppController } from './app.controller.js';
 
 import { AppService } from './app.service.js';
@@ -132,6 +134,8 @@ import { AppService } from './app.service.js';
     AiModule,
 
     BillingModule,
+
+    SecurityModule,
   ],
 
   controllers: [

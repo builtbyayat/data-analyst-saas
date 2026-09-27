@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { existsSync } from 'fs';
 import { createInterface } from 'readline';
 import { resolve } from 'path';
+import { createPythonWorkerEnv } from '../security/child-process-env.js';
 
 interface PythonWorkerResponse {
   requestId: string;
@@ -257,7 +258,7 @@ export class PythonAnalyticsService
                 '..',
               ),
 
-              env: process.env,
+              env: createPythonWorkerEnv(),
 
               windowsHide: true,
 

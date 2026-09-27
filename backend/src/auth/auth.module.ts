@@ -6,11 +6,13 @@ import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { JwtStrategy } from './jwt.strategy.js';
 import { MeController } from './me.controller.js';
+import { SecurityModule } from '../security/security.module.js';
 
 @Module({
   imports: [
     ConfigModule,
     UsersModule,
+    SecurityModule,
 
     JwtModule.registerAsync({
       imports: [ConfigModule],

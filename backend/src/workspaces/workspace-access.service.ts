@@ -7,6 +7,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { WorkspaceMember } from './workspace-member.entity.js';
 
+export type WorkspaceRole =
+  WorkspaceMember['role'];
+
 @Injectable()
 export class WorkspaceAccessService {
   constructor(
@@ -39,5 +42,35 @@ export class WorkspaceAccessService {
     }
 
     return membership;
+  }
+
+  async requireRole(
+    userId: string,
+    workspaceId: string,
+    roles: readonly WorkspaceRole[],
+  ): Promise<WorkspaceMember> {
+    const membership = await this.requireMembership(
+      userId,
+      workspaceId,
+    );
+
+    if (!roles.includes(membership.role)) {
+      throw new ForbiddenException(
+        'You do not have permission to perform this action',
+      );
+    }
+
+    return membership;
+  }
+
+  async requireAdmin(
+    userId: string,
+    workspaceId: string,
+  ): Promise<WorkspaceMember> {
+    return this.requireRole(
+      userId,
+      workspaceId,
+      ['owner', 'admin'],
+    );
   }
 }

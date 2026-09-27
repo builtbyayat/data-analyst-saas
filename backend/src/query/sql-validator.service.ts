@@ -67,6 +67,27 @@ export class SqlValidatorService {
       'HTTP_PATCH',
       'HTTP_PUT',
       'LOAD_EXTENSION',
+      'GETENV',
+      'CURRENT_SETTING',
+      'PG_READ_FILE',
+    ]);
+
+  private readonly blockedRelations =
+    new Set([
+      'INFORMATION_SCHEMA',
+      'PG_CATALOG',
+      'DUCKDB_SECRETS',
+      'DUCKDB_DATABASES',
+      'DUCKDB_TABLES',
+      'DUCKDB_COLUMNS',
+      'DUCKDB_VIEWS',
+      'DUCKDB_TYPES',
+      'DUCKDB_FUNCTIONS',
+      'DUCKDB_SETTINGS',
+      'DUCKDB_EXTENSIONS',
+      'SQLITE_MASTER',
+      'SQLITE_SCHEMA',
+      'SQLITE_TEMP_MASTER',
     ]);
 
   validate(sql: string): string {
@@ -112,6 +133,14 @@ export class SqlValidatorService {
     );
 
     this.validateBlockedFunctions(
+      normalizedSql,
+    );
+
+    this.validateBlockedRelations(
+      normalizedSql,
+    );
+
+    this.validateExternalTableReferences(
       normalizedSql,
     );
 
@@ -414,6 +443,118 @@ export class SqlValidatorService {
 
       index =
         endIndex - 1;
+    }
+  }
+
+  private validateBlockedRelations(
+    sql: string,
+  ): void {
+    let quote:
+      | "'"
+      | '"'
+      | '`'
+      | null = null;
+
+    let escaped = false;
+    let blockComment = false;
+    let lineComment = false;
+
+    for (let index = 0; index < sql.length; index += 1) {
+      const character = sql[index];
+      const nextCharacter = sql[index + 1];
+
+      if (lineComment) {
+        if (character === '\n' || character === '\r') {
+          lineComment = false;
+        }
+        continue;
+      }
+
+      if (blockComment) {
+        if (character === '*' && nextCharacter === '/') {
+          blockComment = false;
+          index += 1;
+        }
+        continue;
+      }
+
+      if (quote !== null) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (character === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (character === quote) {
+          if (nextCharacter === quote) {
+            index += 1;
+            continue;
+          }
+          quote = null;
+        }
+        continue;
+      }
+
+      if (character === '-' && nextCharacter === '-') {
+        lineComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (character === '/' && nextCharacter === '*') {
+        blockComment = true;
+        index += 1;
+        continue;
+      }
+
+      if (character === "'" || character === '"' || character === '`') {
+        quote = character;
+        continue;
+      }
+
+      if (!/[A-Za-z_]/.test(character ?? '')) {
+        continue;
+      }
+
+      let endIndex = index + 1;
+      while (
+        endIndex < sql.length &&
+        /[A-Za-z0-9_$]/.test(sql[endIndex]!)
+      ) {
+        endIndex += 1;
+      }
+
+      const identifier = sql
+        .slice(index, endIndex)
+        .toUpperCase();
+
+      if (this.blockedRelations.has(identifier)) {
+        throw new BadRequestException(
+          `SQL relation is not allowed: ${identifier}`,
+        );
+      }
+
+      index = endIndex - 1;
+    }
+  }
+
+  private validateExternalTableReferences(
+    sql: string,
+  ): void {
+    const executableSql = sql
+      .replace(/--[^\r\n]*/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ');
+
+    if (
+      /\b(?:FROM|JOIN)\s*'[^']+'/i.test(
+        executableSql,
+      )
+    ) {
+      throw new BadRequestException(
+        'External file table references are not allowed',
+      );
     }
   }
 

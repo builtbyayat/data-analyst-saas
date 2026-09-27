@@ -1,3 +1,5 @@
+import { createPythonWorkerEnv } from '../security/child-process-env.js';
+
 import {
   BadRequestException,
   HttpException,
@@ -1488,43 +1490,8 @@ INSTRUCTIONS:
 
   private buildMultiDatasetExecutableSql(
     sql: string,
-    queryFiles: MultiDatasetQueryFile[],
   ): string {
-    const relationCtes =
-      queryFiles
-        .map(
-          (
-            queryFile,
-            index,
-          ) => {
-            const relationName =
-              queryFile.relationName.replace(
-                /"/g,
-                '""',
-              );
-
-            if (index === 0) {
-              return `"${relationName}" AS (
-  SELECT *
-  FROM dataset
-)`;
-            }
-
-            const escapedPath =
-              this.escapeSqlStringLiteral(
-                queryFile.parquetPath,
-              );
-
-            return `"${relationName}" AS (
-  SELECT *
-  FROM read_parquet('${escapedPath}')
-)`;
-          },
-        )
-        .join(',\n');
-
-    const trimmedSql =
-      sql.trim();
+    const trimmedSql = sql.trim();
 
     if (!trimmedSql) {
       throw new BadRequestException(
@@ -1532,32 +1499,7 @@ INSTRUCTIONS:
       );
     }
 
-    if (
-      /^WITH\s+RECURSIVE\b/i.test(
-        trimmedSql,
-      )
-    ) {
-      return trimmedSql.replace(
-        /^WITH\s+RECURSIVE\b/i,
-        `WITH RECURSIVE ${relationCtes},`,
-      );
-    }
-
-    if (
-      /^WITH\b/i.test(
-        trimmedSql,
-      )
-    ) {
-      return trimmedSql.replace(
-        /^WITH\b/i,
-        `WITH ${relationCtes},`,
-      );
-    }
-
-    return `
-WITH ${relationCtes}
-${trimmedSql}
-`.trim();
+    return trimmedSql;
   }
 
   private async getMultiDatasetQueryFiles(
@@ -1772,7 +1714,7 @@ ${trimmedSql}
               ),
 
               env:
-                process.env,
+                createPythonWorkerEnv(),
 
               windowsHide:
                 true,
@@ -2391,12 +2333,17 @@ ${trimmedSql}
       const executableSql =
         this.buildMultiDatasetExecutableSql(
           validatedSql,
-          prepared.queryFiles,
         );
 
-      await this.duckDbService.validateDatasetQuery(
-        prepared.queryFiles[0]
-          .parquetPath,
+      await this.duckDbService.validateMultipleDatasetQuery(
+        prepared.queryFiles.map(
+          (queryFile) => ({
+            relationName:
+              queryFile.relationName,
+            parquetPath:
+              queryFile.parquetPath,
+          }),
+        ),
         executableSql,
       );
 
@@ -2636,13 +2583,18 @@ ${trimmedSql}
       const executableSql =
         this.buildMultiDatasetExecutableSql(
           validatedSql,
-          prepared.queryFiles,
         );
 
       const result =
-        await this.duckDbService.queryDataset(
-          prepared.queryFiles[0]
-            .parquetPath,
+        await this.duckDbService.queryMultipleDatasets(
+          prepared.queryFiles.map(
+            (queryFile) => ({
+              relationName:
+                queryFile.relationName,
+              parquetPath:
+                queryFile.parquetPath,
+            }),
+          ),
           executableSql,
         );
 

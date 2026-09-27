@@ -20,6 +20,11 @@ export interface DuckDBQueryErrorDetails {
   column: number | null;
 }
 
+export interface DuckDBDatasetSource {
+  relationName: string;
+  parquetPath: string;
+}
+
 export class DuckDBQueryError extends Error {
   readonly code = 'DUCKDB_QUERY_ERROR';
   readonly line: number | null;
@@ -60,71 +65,119 @@ export class DuckDBService implements OnModuleDestroy {
     return this.instance.connect();
   }
 
-  private normalizeQueryError(
-    error: unknown,
-  ): DuckDBQueryError {
-    if (error instanceof DuckDBQueryError) {
-      return error;
+  private async hardenConnection(
+    connection: DuckDBConnection,
+  ): Promise<void> {
+    /*
+     * Server-created dataset views are established before these settings.
+     * Once enabled, external file access is disabled for untrusted SQL.
+     * This is defense in depth alongside SqlValidatorService.
+     */
+    await connection.run(
+      'SET enable_external_access = false',
+    );
+
+    await connection.run(
+      'SET allow_community_extensions = false',
+    );
+
+    await connection.run(
+      'SET allow_unsigned_extensions = false',
+    );
+
+    await connection.run(
+      'SET allow_persistent_secrets = false',
+    );
+
+    await connection.run(
+      'SET allow_unredacted_secrets = false',
+    );
+
+    const memoryLimit =
+      this.getMemoryLimit();
+
+    await connection.run(
+      `SET memory_limit = '${this.escapeSqlLiteral(memoryLimit)}'`,
+    );
+
+    const threads =
+      this.getThreadLimit();
+
+    await connection.run(
+      `SET threads = ${threads}`,
+    );
+
+    await connection.run(
+      'SET lock_configuration = true',
+    );
+  }
+
+  private getMemoryLimit(): string {
+    const configured =
+      process.env.DUCKDB_MEMORY_LIMIT?.trim();
+
+    if (
+      configured &&
+      /^\d+(?:\.\d+)?\s*(?:KB|MB|GB|TB)$/i.test(
+        configured,
+      )
+    ) {
+      return configured;
     }
 
-    const rawMessage =
-      error instanceof Error
-        ? error.message
-        : String(error);
+    return '512MB';
+  }
 
-    const message =
-      rawMessage.trim() ||
-      'DuckDB query failed';
-
-    /*
-     * DuckDB error messages can include source locations such as:
-     *
-     *   ... at line 3, column 12
-     *   ... LINE 3: ...
-     *             ^
-     *
-     * Keep parsing deliberately conservative. If DuckDB does not
-     * provide a reliable location, line/column remain null.
-     */
-    const lineMatch =
-      message.match(
-        /\bline\s+(\d+)\b/i,
+  private getThreadLimit(): number {
+    const configured =
+      Number.parseInt(
+        process.env.DUCKDB_THREADS ?? '2',
+        10,
       );
 
-    const columnMatch =
-      message.match(
-        /\bcolumn\s+(\d+)\b/i,
+    if (
+      !Number.isSafeInteger(configured) ||
+      configured < 1 ||
+      configured > 8
+    ) {
+      return 2;
+    }
+
+    return configured;
+  }
+
+  private escapeSqlLiteral(
+    value: string,
+  ): string {
+    return value.replace(/'/g, "''");
+  }
+
+  private async createDatasetView(
+    connection: DuckDBConnection,
+    relationName: string,
+    parquetPath: string,
+  ): Promise<void> {
+    const safeRelationName =
+      relationName.replace(
+        /"/g,
+        '""',
       );
 
-    const line =
-      lineMatch
-        ? Number(lineMatch[1])
-        : null;
+    const normalizedPath =
+      parquetPath.replace(/\\/g, '/');
 
-    const column =
-      columnMatch
-        ? Number(columnMatch[1])
-        : null;
+    const escapedPath =
+      this.escapeSqlLiteral(
+        normalizedPath,
+      );
 
-    const normalizedLine =
-      typeof line === 'number' &&
-      Number.isFinite(line) &&
-      line > 0
-        ? line
-        : null;
-
-    const normalizedColumn =
-      typeof column === 'number' &&
-      Number.isFinite(column) &&
-      column > 0
-        ? column
-        : null;
-
-    return new DuckDBQueryError({
-      message,
-      line: normalizedLine,
-      column: normalizedColumn,
-    });
+    await connection.run(`
+      CREATE OR REPLACE TEMP VIEW "${safeRelationName}" AS
+      SELECT *
+      FROM read_parquet(
+        '${escapedPath}'
+      )
+    `);
   }
 
   private async runQueryWithTimeout(
@@ -139,8 +192,7 @@ export class DuckDBService implements OnModuleDestroy {
       const pending =
         statement.start();
 
-      const startedAt =
-        Date.now();
+      const startedAt = Date.now();
 
       while (
         pending.runTask() !==
@@ -171,6 +223,57 @@ export class DuckDBService implements OnModuleDestroy {
     }
   }
 
+  private normalizeQueryError(
+    error: unknown,
+  ): DuckDBQueryError {
+    if (error instanceof DuckDBQueryError) {
+      return error;
+    }
+
+    const rawMessage =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    const message =
+      rawMessage.trim() ||
+      'DuckDB query failed';
+
+    const lineMatch =
+      message.match(/\bline\s+(\d+)\b/i);
+
+    const columnMatch =
+      message.match(
+        /\bcolumn\s+(\d+)\b/i,
+      );
+
+    const line =
+      lineMatch
+        ? Number(lineMatch[1])
+        : null;
+
+    const column =
+      columnMatch
+        ? Number(columnMatch[1])
+        : null;
+
+    return new DuckDBQueryError({
+      message,
+      line:
+        typeof line === 'number' &&
+        Number.isFinite(line) &&
+        line > 0
+          ? line
+          : null,
+      column:
+        typeof column === 'number' &&
+        Number.isFinite(column) &&
+        column > 0
+          ? column
+          : null,
+    });
+  }
+
   async query(
     sql: string,
   ): Promise<DuckDBQueryResult> {
@@ -194,68 +297,59 @@ export class DuckDBService implements OnModuleDestroy {
     }
   }
 
-  /**
-   * Validates SQL against an uploaded Parquet dataset without
-   * executing the query.
-   *
-   * DuckDB.prepare() performs parsing and binding, allowing
-   * syntax and semantic errors such as unknown columns,
-   * unknown tables, invalid functions, and invalid expressions
-   * to be detected before execution.
-   *
-   * The SQL itself is not wrapped or rewritten, so all supported
-   * DuckDB SQL statement types remain available.
-   */
   async validateDatasetQuery(
     parquetPath: string,
+    sql: string,
+  ): Promise<void> {
+    await this.validateMultipleDatasetQuery(
+      [
+        {
+          relationName: 'dataset',
+          parquetPath,
+        },
+      ],
+      sql,
+    );
+  }
+
+  async validateMultipleDatasetQuery(
+    sources: DuckDBDatasetSource[],
     sql: string,
   ): Promise<void> {
     const connection =
       await this.createConnection();
 
     try {
-      const normalizedPath =
-        parquetPath.replace(
-          /\\/g,
-          '/',
+      for (const source of sources) {
+        await this.createDatasetView(
+          connection,
+          source.relationName,
+          source.parquetPath,
         );
+      }
 
-      const escapedPath =
-        normalizedPath.replace(
-          /'/g,
-          "''",
-        );
+      await this.hardenConnection(
+        connection,
+      );
 
-      /*
-       * Expose the uploaded Parquet file as the same `dataset`
-       * relation used during normal query execution.
-       *
-       * No query execution happens here.
-       */
-      await connection.run(`
-        CREATE OR REPLACE TEMP VIEW dataset AS
-        SELECT *
-        FROM read_parquet(
-          '${escapedPath}'
-        )
-      `);
-
-      /*
-       * prepare() is intentionally used instead of runAndReadAll().
-       *
-       * This validates parsing and binding without executing the
-       * user's SQL or modifying the dataset through execution.
-       */
       await connection.prepare(sql);
     } catch (error) {
       throw this.normalizeQueryError(error);
     } finally {
-      try {
-        await connection.run(
-          'DROP VIEW IF EXISTS dataset',
-        );
-      } catch {
-        // Ignore cleanup errors.
+      for (const source of sources) {
+        try {
+          const safeRelationName =
+            source.relationName.replace(
+              /"/g,
+              '""',
+            );
+
+          await connection.run(
+            `DROP VIEW IF EXISTS "${safeRelationName}"`,
+          );
+        } catch {
+          // Ignore cleanup errors.
+        }
       }
 
       connection.disconnectSync();
@@ -267,40 +361,38 @@ export class DuckDBService implements OnModuleDestroy {
     sql: string,
     timeoutMs = this.defaultTimeoutMs,
   ): Promise<DuckDBQueryResult> {
+    return this.queryMultipleDatasets(
+      [
+        {
+          relationName: 'dataset',
+          parquetPath,
+        },
+      ],
+      sql,
+      timeoutMs,
+    );
+  }
+
+  async queryMultipleDatasets(
+    sources: DuckDBDatasetSource[],
+    sql: string,
+    timeoutMs = this.defaultTimeoutMs,
+  ): Promise<DuckDBQueryResult> {
     const connection =
       await this.createConnection();
 
     try {
-      const normalizedPath =
-        parquetPath.replace(
-          /\\/g,
-          '/',
+      for (const source of sources) {
+        await this.createDatasetView(
+          connection,
+          source.relationName,
+          source.parquetPath,
         );
+      }
 
-      const escapedPath =
-        normalizedPath.replace(
-          /'/g,
-          "''",
-        );
-
-      /*
-       * The uploaded Parquet file is exposed as the
-       * `dataset` relation for the duration of this connection.
-       *
-       * The SQL itself is executed directly.
-       *
-       * This intentionally does NOT wrap the query inside
-       * SELECT * FROM (...) because doing so would prevent
-       * valid SQL constructs/statements from being handled
-       * correctly.
-       */
-      await connection.run(`
-        CREATE OR REPLACE TEMP VIEW dataset AS
-        SELECT *
-        FROM read_parquet(
-          '${escapedPath}'
-        )
-      `);
+      await this.hardenConnection(
+        connection,
+      );
 
       const result =
         await this.runQueryWithTimeout(
@@ -318,12 +410,20 @@ export class DuckDBService implements OnModuleDestroy {
     } catch (error) {
       throw this.normalizeQueryError(error);
     } finally {
-      try {
-        await connection.run(
-          'DROP VIEW IF EXISTS dataset',
-        );
-      } catch {
-        // Ignore cleanup errors.
+      for (const source of sources) {
+        try {
+          const safeRelationName =
+            source.relationName.replace(
+              /"/g,
+              '""',
+            );
+
+          await connection.run(
+            `DROP VIEW IF EXISTS "${safeRelationName}"`,
+          );
+        } catch {
+          // Ignore cleanup errors.
+        }
       }
 
       connection.disconnectSync();

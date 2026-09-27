@@ -15,6 +15,7 @@ import { Dataset } from '../datasets/dataset.entity.js';
 import { DatasetsModule } from '../datasets/datasets.module.js';
 
 import { WorkspacesModule } from '../workspaces/workspaces.module.js';
+import { SecurityModule } from '../security/security.module.js';
 
 import { AIInsightsService } from './ai-insights.service.js';
 
@@ -141,6 +142,7 @@ import {
     ]),
 
     WorkspacesModule,
+    SecurityModule,
 
     DatasetsModule,
 
