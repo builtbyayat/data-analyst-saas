@@ -33,6 +33,12 @@ import { ObservabilityModule } from './observability/observability.module.js';
 
 import { HealthModule } from './health/health.module.js';
 
+import { AgentsModule } from './agents/agents.module.js';
+
+import { McpModule } from './mcp/mcp.module.js';
+
+import { MemoryModule } from './memory/memory.module.js';
+
 import { getPostgresPoolConfig } from './performance/pool-config.js';
 
 import { AppController } from './app.controller.js';
@@ -152,6 +158,12 @@ import { AppService } from './app.service.js';
     ObservabilityModule,
 
     HealthModule,
+
+    AgentsModule,
+
+    McpModule,
+
+    MemoryModule,
   ],
 
   controllers: [

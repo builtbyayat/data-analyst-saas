@@ -20,4 +20,12 @@ export class UnavailableAiProvider
       'AI provider is not configured',
     );
   }
+
+  async generateEmbedding(
+    _text: string,
+  ): Promise<number[]> {
+    throw new ServiceUnavailableException(
+      'AI provider is not configured',
+    );
+  }
 }

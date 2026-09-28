@@ -32,7 +32,19 @@ import { WorkspaceSubscription } from './billing/workspace-subscription.entity.j
 
 import { BillingWebhookEvent } from './billing/billing-webhook-event.entity.js';
 
+import { AgentSession } from './agents/agent-session.entity.js';
+
+import { AgentTask } from './agents/agent-task.entity.js';
+
+import { WorkspaceMemory } from './memory/workspace-memory.entity.js';
+
 import { getPostgresPoolConfig } from './performance/pool-config.js';
+
+const migrationsPattern =
+  process.env.NODE_ENV ===
+  'production'
+    ? 'dist/migrations/*.js'
+    : 'src/migrations/*.ts';
 
 const dataSource =
   new DataSource({
@@ -87,10 +99,16 @@ const dataSource =
       WorkspaceSubscription,
 
       BillingWebhookEvent,
+
+      AgentSession,
+
+      AgentTask,
+
+      WorkspaceMemory,
     ],
 
     migrations: [
-      'src/migrations/*.ts',
+      migrationsPattern,
     ],
 
     synchronize: false,

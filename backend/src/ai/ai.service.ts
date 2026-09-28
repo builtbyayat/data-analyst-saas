@@ -18,4 +18,10 @@ export class AiService {
   ): Promise<AiTextGenerationResponse> {
     return this.provider.generateText(request);
   }
+
+  generateEmbedding(
+    text: string,
+  ): Promise<number[]> {
+    return this.provider.generateEmbedding(text);
+  }
 }
