@@ -162,6 +162,7 @@ export class FastSqlService {
      */
     await this.planUsageService.consumeSqlExecution(
       workspaceId,
+      userId,
     );
 
     try {

@@ -1,6 +1,5 @@
 import {
   Injectable,
-  OnModuleDestroy,
 } from '@nestjs/common';
 
 import {
@@ -25,6 +24,11 @@ export interface DuckDBDatasetSource {
   parquetPath: string;
 }
 
+interface DuckDBSession {
+  instance: DuckDBInstance;
+  connection: DuckDBConnection;
+}
+
 export class DuckDBQueryError extends Error {
   readonly code = 'DUCKDB_QUERY_ERROR';
   readonly line: number | null;
@@ -39,37 +43,59 @@ export class DuckDBQueryError extends Error {
 }
 
 @Injectable()
-export class DuckDBService implements OnModuleDestroy {
-  private instance: DuckDBInstance | null = null;
-
+export class DuckDBService {
   private readonly defaultTimeoutMs = 5000;
 
-  async initialize(): Promise<void> {
-    if (this.instance) {
-      return;
-    }
-
-    this.instance =
+  /**
+   * Create an isolated DuckDB instance for one logical operation.
+   *
+   * DuckDB configuration such as enable_external_access and
+   * lock_configuration must not leak between requests. A shared
+   * in-memory instance caused one hardened connection to affect
+   * later dataset-materialization operations.
+   */
+  private async createSession(): Promise<DuckDBSession> {
+    const instance =
       await DuckDBInstance.create(':memory:');
+
+    try {
+      const connection =
+        await instance.connect();
+
+      return {
+        instance,
+        connection,
+      };
+    } catch (error) {
+      try {
+        instance.closeSync();
+      } catch {
+        // Ignore cleanup errors.
+      }
+
+      throw error;
+    }
   }
 
-  private async createConnection(): Promise<DuckDBConnection> {
-    await this.initialize();
-
-    if (!this.instance) {
-      throw new Error(
-        'DuckDB instance is not initialized',
-      );
+  private closeSession(
+    session: DuckDBSession,
+  ): void {
+    try {
+      session.connection.disconnectSync();
+    } finally {
+      try {
+        session.instance.closeSync();
+      } catch {
+        // Ignore cleanup errors.
+      }
     }
-
-    return this.instance.connect();
   }
 
   private async hardenConnection(
     connection: DuckDBConnection,
   ): Promise<void> {
     /*
-     * Server-created dataset views are established before these settings.
+     * Server-created dataset tables are established before these settings.
      * Once enabled, external file access is disabled for untrusted SQL.
      * This is defense in depth alongside SqlValidatorService.
      */
@@ -171,8 +197,14 @@ export class DuckDBService implements OnModuleDestroy {
         normalizedPath,
       );
 
+    /*
+     * Materialize the parquet file into a temporary DuckDB table.
+     *
+     * This MUST execute before hardenConnection() disables
+     * external file access.
+     */
     await connection.run(`
-      CREATE OR REPLACE TEMP VIEW "${safeRelationName}" AS
+      CREATE OR REPLACE TEMP TABLE "${safeRelationName}" AS
       SELECT *
       FROM read_parquet(
         '${escapedPath}'
@@ -192,7 +224,8 @@ export class DuckDBService implements OnModuleDestroy {
       const pending =
         statement.start();
 
-      const startedAt = Date.now();
+      const startedAt =
+        Date.now();
 
       while (
         pending.runTask() !==
@@ -240,7 +273,9 @@ export class DuckDBService implements OnModuleDestroy {
       'DuckDB query failed';
 
     const lineMatch =
-      message.match(/\bline\s+(\d+)\b/i);
+      message.match(
+        /\bline\s+(\d+)\b/i,
+      );
 
     const columnMatch =
       message.match(
@@ -277,8 +312,12 @@ export class DuckDBService implements OnModuleDestroy {
   async query(
     sql: string,
   ): Promise<DuckDBQueryResult> {
-    const connection =
-      await this.createConnection();
+    const session =
+      await this.createSession();
+
+    const {
+      connection,
+    } = session;
 
     try {
       const reader =
@@ -293,7 +332,7 @@ export class DuckDBService implements OnModuleDestroy {
     } catch (error) {
       throw this.normalizeQueryError(error);
     } finally {
-      connection.disconnectSync();
+      this.closeSession(session);
     }
   }
 
@@ -316,8 +355,12 @@ export class DuckDBService implements OnModuleDestroy {
     sources: DuckDBDatasetSource[],
     sql: string,
   ): Promise<void> {
-    const connection =
-      await this.createConnection();
+    const session =
+      await this.createSession();
+
+    const {
+      connection,
+    } = session;
 
     try {
       for (const source of sources) {
@@ -345,14 +388,14 @@ export class DuckDBService implements OnModuleDestroy {
             );
 
           await connection.run(
-            `DROP VIEW IF EXISTS "${safeRelationName}"`,
+            `DROP TABLE IF EXISTS "${safeRelationName}"`,
           );
         } catch {
           // Ignore cleanup errors.
         }
       }
 
-      connection.disconnectSync();
+      this.closeSession(session);
     }
   }
 
@@ -378,8 +421,12 @@ export class DuckDBService implements OnModuleDestroy {
     sql: string,
     timeoutMs = this.defaultTimeoutMs,
   ): Promise<DuckDBQueryResult> {
-    const connection =
-      await this.createConnection();
+    const session =
+      await this.createSession();
+
+    const {
+      connection,
+    } = session;
 
     try {
       for (const source of sources) {
@@ -419,18 +466,14 @@ export class DuckDBService implements OnModuleDestroy {
             );
 
           await connection.run(
-            `DROP VIEW IF EXISTS "${safeRelationName}"`,
+            `DROP TABLE IF EXISTS "${safeRelationName}"`,
           );
         } catch {
           // Ignore cleanup errors.
         }
       }
 
-      connection.disconnectSync();
+      this.closeSession(session);
     }
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    this.instance = null;
   }
 }

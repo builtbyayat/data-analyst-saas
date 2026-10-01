@@ -126,7 +126,16 @@ export class PlanUsageService {
 
   async consumeAiQuery(
     workspaceId: string,
+    userId: string,
   ): Promise<void> {
+    if (
+      this.isInternalBypassUser(
+        userId,
+      )
+    ) {
+      return;
+    }
+
     const workspace =
       await this.getWorkspace(
         workspaceId,
@@ -198,7 +207,16 @@ export class PlanUsageService {
 
   async consumeSqlExecution(
     workspaceId: string,
+    userId: string,
   ): Promise<void> {
+    if (
+      this.isInternalBypassUser(
+        userId,
+      )
+    ) {
+      return;
+    }
+
     const workspace =
       await this.getWorkspace(
         workspaceId,
@@ -270,7 +288,16 @@ export class PlanUsageService {
 
   async consumeAiAndSql(
     workspaceId: string,
+    userId: string,
   ): Promise<void> {
+    if (
+      this.isInternalBypassUser(
+        userId,
+      )
+    ) {
+      return;
+    }
+
     const workspace =
       await this.getWorkspace(
         workspaceId,
@@ -380,6 +407,35 @@ export class PlanUsageService {
         usageDate,
       },
       HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  private isInternalBypassUser(
+    userId: string,
+  ): boolean {
+    /*
+     * Internal quota bypass is intentionally available only
+     * outside production and only for explicitly configured
+     * user IDs. It is never granted by workspace ownership.
+     */
+    if (
+      process.env.NODE_ENV ===
+      'production'
+    ) {
+      return false;
+    }
+
+    const configuredUserIds =
+      process.env
+        .PLAN_USAGE_INTERNAL_BYPASS_USER_IDS
+        ?.split(',')
+        .map((value) =>
+          value.trim(),
+        )
+        .filter(Boolean) ?? [];
+
+    return configuredUserIds.includes(
+      userId.trim(),
     );
   }
 

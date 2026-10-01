@@ -296,8 +296,8 @@ export class GeminiProvider
           },
         });
 
-      const values =
-        response.embedding?.values;
+const values =
+  response.embeddings?.[0]?.values;
 
       if (!values || !Array.isArray(values)) {
         throw new ServiceUnavailableException(

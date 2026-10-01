@@ -80,33 +80,6 @@ export class SqlGenerationService {
         workspaceId,
       );
 
-    const positionalSql =
-      this.buildPositionalColumnSql(
-        normalizedQuestion,
-        context,
-      );
-
-    if (positionalSql) {
-      const validatedSql =
-        this.sqlValidatorService.validate(
-          positionalSql,
-        );
-
-      return {
-        question:
-          normalizedQuestion,
-
-        sql:
-          validatedSql,
-
-        provider:
-          'deterministic',
-
-        model:
-          null,
-      };
-    }
-
     const systemPrompt =
       this.buildSystemPrompt();
 
@@ -154,172 +127,6 @@ export class SqlGenerationService {
       model:
         generated.model,
     };
-  }
-
-  private buildPositionalColumnSql(
-    question: string,
-    context: DatasetAnalysisContext,
-  ): string | null {
-    const columns =
-      [...context.columns].sort(
-        (a, b) =>
-          a.ordinalPosition -
-          b.ordinalPosition,
-      );
-
-    if (!columns.length) {
-      return null;
-    }
-
-    const normalized =
-      question
-        .trim()
-        .toLocaleLowerCase();
-
-    const removalIntent =
-      this.hasColumnRemovalIntent(
-        normalized,
-      );
-
-    if (!removalIntent) {
-      return null;
-    }
-
-    const countMatch =
-      normalized.match(
-        /(?:first|last)\s+(\d+)\s+(?:columns?|cols?)/i,
-      ) ||
-      normalized.match(
-        /(?:first|last)\s+(?:the\s+)?(\d+)\s+(?:columns?|cols?)/i,
-      ) ||
-      normalized.match(
-        /(?:पहले|आखिरी|अंतिम|पिछले)\s+(\d+)\s+(?:कॉलम|कॉलम्स|स्तंभ)/i,
-      ) ||
-      normalized.match(
-        /(?:los\s+primeros|los\s+últimos|los\s+ultimos)\s+(\d+)\s+columnas?/i,
-      ) ||
-      normalized.match(
-        /(?:les\s+premières|les\s+dernières|les\s+dernieres)\s+(\d+)\s+colonnes?/i,
-      ) ||
-      normalized.match(
-        /(?:die\s+ersten|die\s+letzten)\s+(\d+)\s+spalten?/i,
-      );
-
-    if (!countMatch) {
-      return null;
-    }
-
-    const count =
-      Number.parseInt(
-        countMatch[1]!,
-        10,
-      );
-
-    if (
-      !Number.isFinite(count) ||
-      count <= 0
-    ) {
-      return null;
-    }
-
-    const isFirst =
-      this.isFirstColumnPositionRequest(
-        normalized,
-      );
-
-    const remainingColumns =
-      isFirst
-        ? columns.slice(count)
-        : columns.slice(
-            0,
-            Math.max(
-              0,
-              columns.length -
-                count,
-            ),
-          );
-
-    if (
-      !remainingColumns.length
-    ) {
-      throw new BadRequestException(
-        'The requested column removal would leave no columns in the result',
-      );
-    }
-
-    const selectedColumns =
-      remainingColumns
-        .map(
-          (column) =>
-            this.quoteIdentifier(
-              column.name,
-            ),
-        )
-        .join(', ');
-
-    return `SELECT ${selectedColumns} FROM dataset`;
-  }
-
-  private hasColumnRemovalIntent(
-    question: string,
-  ): boolean {
-    const removalPatterns = [
-      /\b(?:remove|delete|drop|exclude|omit|without)\b/i,
-
-      /\b(?:remove|delete|drop|exclude|omit)\b.*\b(?:column|columns|col|cols)\b/i,
-
-      /\b(?:column|columns|col|cols)\b.*\b(?:remove|delete|drop|exclude|omit)\b/i,
-
-      /(?:हटा|हटाओ|हटाना|निकाल|निकालो|मिटा|मिटाओ|डिलीट|ड्रॉप).*(?:कॉलम|कॉलम्स|स्तंभ)/i,
-
-      /(?:कॉलम|कॉलम्स|स्तंभ).*(?:हटा|हटाओ|हटाना|निकाल|निकालो|मिटा|मिटाओ|डिलीट|ड्रॉप)/i,
-
-      /\b(?:elimina|eliminar|elimine|eliminemos|borra|borrar|quita|quitar|excluye|excluir)\b.*\bcolumnas?\b/i,
-
-      /\b(?:supprime|supprimer|retire|retirer|exclure|exclus)\b.*\bcolonnes?\b/i,
-
-      /\b(?:entferne|entfernen|lösche|löschen|loesche|loeschen|entfernt|ausschließen|ausschliesse)\b.*\bspalten?\b/i,
-
-      /\b(?:remove|delete|drop|exclude|omit)\b.*\b(?:columns?|cols?)\b/i,
-    ];
-
-    return removalPatterns.some(
-      (pattern) =>
-        pattern.test(
-          question,
-        ),
-    );
-  }
-
-  private isFirstColumnPositionRequest(
-    question: string,
-  ): boolean {
-    return (
-      /\bfirst\s+\d+\s+(?:columns?|cols?)\b/i.test(
-        question,
-      ) ||
-      /\b(?:पहले)\s+\d+\s+(?:कॉलम|कॉलम्स|स्तंभ)/i.test(
-        question,
-      ) ||
-      /\b(?:los\s+primeros)\s+\d+\s+columnas?\b/i.test(
-        question,
-      ) ||
-      /\b(?:les\s+premières|les\s+premieres)\s+\d+\s+colonnes?\b/i.test(
-        question,
-      ) ||
-      /\b(?:die\s+ersten)\s+\d+\s+spalten?\b/i.test(
-        question,
-      )
-    );
-  }
-
-  private quoteIdentifier(
-    identifier: string,
-  ): string {
-    return `"${identifier.replace(
-      /"/g,
-      '""',
-    )}"`;
   }
 
   private normalizeGeneratedSql(
@@ -395,7 +202,7 @@ READ-ONLY SQL CAPABILITIES:
 - EXISTS, NOT EXISTS, IN, and NOT IN are supported.
 - UNION, UNION ALL, INTERSECT, and EXCEPT are supported.
 - Window functions and window frames are supported.
-- Aggregations, date/time operations, string operations, conditional expressions, mathematical functions, and DuckDB-supported read-only functions are supported.
+- Aggregations, date/time operations, string operations, conditional expressions, mathematical functions, and DuckDB-supported functions are supported.
 - EXPLAIN, DESCRIBE, and SUMMARIZE may be generated when the user explicitly requests read-only inspection.
 - Never generate INSERT, UPDATE, DELETE, MERGE, CREATE, ALTER, DROP, TRUNCATE, COPY, ATTACH, DETACH, INSTALL, LOAD, EXPORT, IMPORT, CALL, SET, RESET, USE, VACUUM, or any other state-changing statement.
 - Never use READ_PARQUET, PARQUET_SCAN, READ_CSV, READ_CSV_AUTO, READ_JSON, READ_JSON_AUTO, READ_TEXT, READ_BLOB, GLOB, or arbitrary HTTP/file access functions.
@@ -407,7 +214,6 @@ READ-ONLY SQL CAPABILITIES:
 RELATIONAL QUERY PLANNING:
 - The current SQL context exposes one known base relation named "dataset".
 - Do not invent physical tables such as "customers", "orders", "products", "users", "sales", or any other table unless that relation is explicitly present in the provided query context.
-- The current milestone supports advanced JOIN construction, but multi-file physical relations are introduced separately. Do not simulate unavailable datasets by inventing tables.
 - A JOIN may use:
   - the base relation "dataset"
   - another relation explicitly provided by the actual query context
@@ -428,7 +234,6 @@ RELATIONAL QUERY PLANNING:
 - Do not replace a requested JOIN with an unrelated single-table query.
 - Do not remove a JOIN merely because the query also contains GROUP BY, HAVING, a subquery, or a window function.
 - When a request requires comparing rows within the same dataset, a self-join may be used when it is the most direct valid interpretation and the available schema supports it.
-- When the request requires combining multiple physical datasets that are not present in the current context, do not invent their relations. Generate SQL only from the available context.
 
 DATASET AND SCHEMA:
 - Use only columns that exist in the provided dataset schema.
@@ -437,10 +242,11 @@ DATASET AND SCHEMA:
 - The table "dataset" represents the uploaded dataset.
 - Preserve actual column names exactly when referencing them.
 - Quote identifiers when necessary, especially when names contain spaces, punctuation, reserved words, or unusual characters.
-- Use the original ordinal column order when the user refers to positions such as first, last, first 5, or last 9.
+- Use the original ordinal column order when the user refers to positional columns.
 
 INTENT:
-- Understand the meaning of the user's request rather than matching keywords literally.
+- Understand the semantic meaning of the user's request rather than matching keywords literally.
+- The same intent may be expressed in different languages, scripts, transliterations, colloquial phrasing, or mixed-language text.
 - Fulfill the requested analytical operation directly in read-only SQL whenever the available schema supports it.
 - Do not silently simplify the requested operation.
 - Do not replace a requested JOIN with an unrelated single-table query.
@@ -459,10 +265,10 @@ LANGUAGE UNDERSTANDING:
 - The user may use transliteration, romanized writing, code-switching, abbreviations, colloquial language, or informal language.
 - Preserve the meaning of mixed-language requests.
 - Do not require the user to write in English.
-- SQL output itself must remain valid SQL; natural-language language should affect interpretation, not SQL syntax.
+- Natural-language language affects interpretation only; SQL must remain valid DuckDB SQL.
 
 COLUMN REMOVAL:
-- If the user asks to remove, delete, drop, exclude, omit, or leave out columns from the RESULT, return the remaining requested columns.
+- If the user asks to remove, delete, drop, exclude, omit, or leave out columns from the RESULT, return the remaining columns.
 - Do not interpret result-column removal as permission to modify the underlying dataset.
 - Never generate ALTER TABLE, DROP COLUMN, or other schema-changing SQL.
 
@@ -514,15 +320,12 @@ DATASET:
 - Rows: ${context.dataset.rowCount}
 - Columns: ${context.dataset.columnCount}
 - Status: ${context.dataset.status}
-- Primary table name: dataset
+- SQL relation: dataset
 
 RELATIONSHIP CONTEXT:
 - The current dataset is exposed as the SQL relation "dataset".
 - Only relations explicitly present in the current query context may be referenced.
-- Do not invent additional physical tables.
-- Advanced JOINs may still be used with derived tables, subqueries, CTEs, or a valid self-join against "dataset".
-- Do not infer a foreign-key relationship unless the available schema and request provide enough evidence for it.
-- Qualify columns with table aliases when multiple relations or aliases are used.
+- Do not use the dataset display name or original filename as a SQL relation name unless it is literally the supplied SQL relation.
 
 SCHEMA:
 The following columns are the complete known schema of the current dataset.

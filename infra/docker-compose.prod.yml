@@ -1,0 +1,258 @@
+﻿name: b2b-saas-production
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg18}
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME:-b2b_saas}
+      POSTGRES_USER: ${DATABASE_USER:-app}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set}
+
+    volumes:
+      - postgres_production_data:/var/lib/postgresql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DATABASE_USER:-app} -d ${DATABASE_NAME:-b2b_saas}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:8}
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+      ]
+
+    volumes:
+      - redis_production_data:/data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+
+  minio:
+    image: ${MINIO_IMAGE:-quay.io/minio/minio:latest}
+    restart: unless-stopped
+
+    command:
+      [
+        "server",
+        "/data",
+        "--console-address",
+        ":9001",
+      ]
+
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY must be set}
+
+    volumes:
+      - minio_production_data:/data
+
+
+  backend-migrate:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+
+    restart: "no"
+
+    environment:
+      NODE_ENV: production
+
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-b2b_saas}
+      DATABASE_USER: ${DATABASE_USER:-app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set}
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    command:
+      [
+        "npx",
+        "typeorm",
+        "-d",
+        "dist/data-source.js",
+        "migration:run",
+      ]
+
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-b2b_saas}
+      DATABASE_USER: ${DATABASE_USER:-app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set}
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY must be set}
+      S3_BUCKET: ${S3_BUCKET:-datasets}
+      S3_FORCE_PATH_STYLE: "true"
+
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS must be set}
+
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set}
+
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_TIMEOUT_MS: ${GEMINI_TIMEOUT_MS:-60000}
+      GEMINI_RETRY_ATTEMPTS: ${GEMINI_RETRY_ATTEMPTS:-1}
+
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:?RAZORPAY_KEY_ID must be set}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:?RAZORPAY_KEY_SECRET must be set}
+      RAZORPAY_PRO_PLAN_ID: ${RAZORPAY_PRO_PLAN_ID:?RAZORPAY_PRO_PLAN_ID must be set}
+      RAZORPAY_PRO_TOTAL_COUNT: ${RAZORPAY_PRO_TOTAL_COUNT:?RAZORPAY_PRO_TOTAL_COUNT must be set}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?RAZORPAY_WEBHOOK_SECRET must be set}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      minio:
+        condition: service_started
+
+      backend-migrate:
+        condition: service_completed_successfully
+
+    expose:
+      - "3001"
+
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: ${DATABASE_NAME:-b2b_saas}
+      DATABASE_USER: ${DATABASE_USER:-app}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set}
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY must be set}
+      S3_BUCKET: ${S3_BUCKET:-datasets}
+      S3_FORCE_PATH_STYLE: "true"
+
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set}
+
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      GEMINI_TIMEOUT_MS: ${GEMINI_TIMEOUT_MS:-60000}
+      GEMINI_RETRY_ATTEMPTS: ${GEMINI_RETRY_ATTEMPTS:-1}
+
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:?RAZORPAY_KEY_ID must be set}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:?RAZORPAY_KEY_SECRET must be set}
+      RAZORPAY_PRO_PLAN_ID: ${RAZORPAY_PRO_PLAN_ID:?RAZORPAY_PRO_PLAN_ID must be set}
+      RAZORPAY_PRO_TOTAL_COUNT: ${RAZORPAY_PRO_TOTAL_COUNT:?RAZORPAY_PRO_TOTAL_COUNT must be set}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?RAZORPAY_WEBHOOK_SECRET must be set}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      minio:
+        condition: service_started
+
+      backend-migrate:
+        condition: service_completed_successfully
+
+    command:
+      [
+        "node",
+        "dist/worker.js",
+      ]
+
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+
+      args:
+        BACKEND_URL: http://backend:3001
+
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      BACKEND_URL: http://backend:3001
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    depends_on:
+      backend:
+        condition: service_started
+
+    ports:
+      - "3000:3000"
+
+
+volumes:
+  postgres_production_data:
+  redis_production_data:
+  minio_production_data:
+

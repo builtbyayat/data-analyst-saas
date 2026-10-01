@@ -9,7 +9,6 @@ import {
 } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import type { editor, Position } from "monaco-editor";
-import { Parser } from "node-sql-parser";
 import {
   ApiError,
   type Dataset,
@@ -62,39 +61,6 @@ interface SqlProblem {
 interface SqlValidationTarget {
   editorValue: string;
   startOffset: number;
-}
-
-interface ParserErrorLike {
-  message?: unknown;
-  line?: unknown;
-  column?: unknown;
-  offset?: unknown;
-  location?: {
-    start?: {
-      line?: unknown;
-      column?: unknown;
-      offset?: unknown;
-    };
-    end?: {
-      line?: unknown;
-      column?: unknown;
-      offset?: unknown;
-    };
-  };
-  token?: {
-    loc?: {
-      start?: {
-        line?: unknown;
-        column?: unknown;
-        offset?: unknown;
-      };
-      end?: {
-        line?: unknown;
-        column?: unknown;
-        offset?: unknown;
-      };
-    };
-  };
 }
 
 const DEFAULT_SQL = `SELECT *
@@ -240,17 +206,6 @@ const SQL_FUNCTIONS = [
   "PERCENTILE_CONT",
   "PERCENTILE_DISC",
 ];
-
-/*
- * BigQuery-style syntax parser.
- *
- * Syntax validation is client-side and runs immediately
- * on every editor value change.
- *
- * Semantic validation remains backend-owned because the
- * backend has the real uploaded datasets and DuckDB engine.
- */
-const sqlParser = new Parser();
 
 function SunIcon() {
   return (
@@ -527,185 +482,6 @@ function mapProblemToEditor(
   };
 }
 
-function getParserPosition(
-  error: ParserErrorLike,
-): {
-  line: number | null;
-  column: number | null;
-  offset: number | null;
-} {
-  const locationStart =
-    error.location?.start;
-
-  const tokenStart =
-    error.token?.loc?.start;
-
-  const lineCandidates: unknown[] = [
-    locationStart?.line,
-    tokenStart?.line,
-    error.line,
-  ];
-
-  const columnCandidates: unknown[] = [
-    locationStart?.column,
-    tokenStart?.column,
-    error.column,
-  ];
-
-  const offsetCandidates: unknown[] = [
-    locationStart?.offset,
-    tokenStart?.offset,
-    error.offset,
-  ];
-
-  const lineValue =
-    lineCandidates.find(
-      (
-        value,
-      ): value is number =>
-        typeof value ===
-          "number" &&
-        Number.isFinite(value) &&
-        value > 0,
-    );
-
-  const columnValue =
-    columnCandidates.find(
-      (
-        value,
-      ): value is number =>
-        typeof value ===
-          "number" &&
-        Number.isFinite(value) &&
-        value > 0,
-    );
-
-  const offsetValue =
-    offsetCandidates.find(
-      (
-        value,
-      ): value is number =>
-        typeof value ===
-          "number" &&
-        Number.isFinite(value) &&
-        value >= 0,
-    );
-
-  return {
-    line:
-      lineValue ??
-      null,
-
-    column:
-      columnValue ??
-      null,
-
-    offset:
-      offsetValue ??
-      null,
-  };
-}
-
-function extractPositionFromMessage(
-  message: string,
-): {
-  line: number | null;
-  column: number | null;
-} {
-  const lineColumnPatterns = [
-    /line\s+(\d+)\s*(?:,|at)?\s*(?:col(?:umn)?\.?|column)\s+(\d+)/i,
-    /line\s+(\d+).*?column\s+(\d+)/i,
-    /\((\d+)\s*[,;]\s*(\d+)\)/,
-  ];
-
-  for (
-    const pattern of lineColumnPatterns
-  ) {
-    const match =
-      message.match(pattern);
-
-    if (!match) continue;
-
-    const line =
-      Number(match[1]);
-
-    const column =
-      Number(match[2]);
-
-    if (
-      Number.isFinite(line) &&
-      Number.isFinite(column)
-    ) {
-      return {
-        line,
-        column,
-      };
-    }
-  }
-
-  return {
-    line: null,
-    column: null,
-  };
-}
-
-function normalizeParserError(
-  error: unknown,
-): {
-  message: string;
-  line: number | null;
-  column: number | null;
-  offset: number | null;
-} {
-  const parserError =
-    error as ParserErrorLike;
-
-  const rawMessage =
-    typeof parserError.message ===
-    "string"
-      ? parserError.message
-      : error instanceof Error
-        ? error.message
-        : "SQL syntax error.";
-
-  const message =
-    rawMessage.trim() ||
-    "SQL syntax error.";
-
-  const parserPosition =
-    getParserPosition(
-      parserError,
-    );
-
-  if (
-    parserPosition.line !==
-      null &&
-    parserPosition.column !==
-      null
-  ) {
-    return {
-      message,
-      line: parserPosition.line,
-      column:
-        parserPosition.column,
-      offset:
-        parserPosition.offset,
-    };
-  }
-
-  const textPosition =
-    extractPositionFromMessage(
-      message,
-    );
-
-  return {
-    message,
-    line: textPosition.line,
-    column: textPosition.column,
-    offset: null,
-  };
-}
-
 function validateSqlSyntax(
   value: string,
 ): SqlProblem[] {
@@ -750,67 +526,15 @@ function validateSqlSyntax(
     ];
   }
 
-  try {
-    sqlParser.astify(sql, {
-      database: "BigQuery",
-      parseOptions: {
-        includeLocations: true,
-      },
-    });
-
-    return [];
-  } catch (error) {
-    const normalized =
-      normalizeParserError(error);
-
-    let index = 0;
-
-    if (
-      normalized.offset !== null
-    ) {
-      index = Math.max(
-        0,
-        Math.min(
-          normalized.offset,
-          value.length,
-        ),
-      );
-    } else if (
-      normalized.line !== null &&
-      normalized.column !== null
-    ) {
-      index =
-        getIndexFromLineColumn(
-          value,
-          normalized.line,
-          normalized.column,
-        );
-    } else {
-      index = Math.max(
-        value.length - 1,
-        0,
-      );
-    }
-
-    const remainingLength =
-      Math.max(
-        value.length - index,
-        1,
-      );
-
-    return [
-      createSqlProblem(
-        value,
-        index,
-        normalized.message,
-        "error",
-        Math.min(
-          remainingLength,
-          200,
-        ),
-      ),
-    ];
-  }
+  /*
+   * SQL dialect validation is authoritative on the backend.
+   * The backend validates against the actual DuckDB engine and
+   * dataset relations. A browser-side generic SQL parser was
+   * intentionally removed because this editor executes DuckDB
+   * SQL, including dialect-specific syntax such as UNION ALL BY NAME,
+   * that a different dialect parser can incorrectly reject.
+   */
+  return [];
 }
 
 // ==========================================
@@ -5003,9 +4727,9 @@ export default function QueryWorkspacePage() {
                     <span className="text-[11px] font-semibold text-[var(--muted)]">
                       {queryReady
                         ? multiMode
-                          ? "Syntax validation is active. Semantic checks run across the selected datasets."
-                          : "Syntax validation is active. Semantic checks run against the selected dataset."
-                        : "Type SQL to run the live syntax parser."}
+                          ? "Live SQL validation is active across the selected datasets."
+                          : "Live SQL validation is active against the selected dataset."
+                        : "Type SQL to run live SQL validation."}
                     </span>
                   )}
               </div>
@@ -5089,9 +4813,9 @@ export default function QueryWorkspacePage() {
                       ? "No SQL validation problems detected."
                       : queryReady
                         ? multiMode
-                          ? "Type SQL to run the live parser and cross-file semantic checker."
-                          : "Type SQL to run the live parser and dataset semantic checker."
-                        : "Type SQL to run the live syntax parser."}
+                          ? "Type SQL to run live SQL validation across the selected datasets."
+                          : "Type SQL to run live SQL validation against the selected dataset."
+                        : "Type SQL to run live SQL validation."}
                   </div>
                 )
               )}

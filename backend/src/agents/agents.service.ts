@@ -55,10 +55,11 @@ export class AgentsService {
 
   async getSession(sessionId: string, workspaceId: string): Promise<AgentSession> {
     const session = await this.sessionRepository.findOne({
-      where: { id: sessionId, workspaceId },
-      relations: ['tasks'],
-    });
-
+  where: { id: sessionId, workspaceId },
+  relations: {
+    tasks: true,
+  },
+});
     if (!session) {
       throw new NotFoundException(`Agent session ${sessionId} not found`);
     }

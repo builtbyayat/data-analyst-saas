@@ -66,57 +66,59 @@ export class PlanUsageInterceptor
       return next.handle();
     }
 
-    const routePath =
+    const userId =
+      request.user?.id ??
+      request.user?.userId ??
+      request.user?.sub;
+
+    if (
+      typeof userId !==
+        'string' ||
+      !userId.trim()
+    ) {
+      return next.handle();
+    }
+
+    if (
       this.getRoutePath(
         request,
-      );
-
-    /*
-     * SQL + AI:
-     * A natural-language query first uses one AI
-     * query and then executes one SQL query.
-     *
-     * We consume both atomically so a request
-     * can never consume one quota and fail while
-     * reserving the other quota.
-     */
-    if (
-      routePath.includes(
+      ).includes(
         '/query-from-question',
       )
     ) {
       await this.planUsageService.consumeAiAndSql(
         workspaceId,
+        userId,
       );
 
       return next.handle();
     }
 
-    /*
-     * SQL generation only.
-     */
     if (
-      routePath.includes(
+      this.getRoutePath(
+        request,
+      ).includes(
         '/generate-sql',
       )
     ) {
       await this.planUsageService.consumeAiQuery(
         workspaceId,
+        userId,
       );
 
       return next.handle();
     }
 
-    /*
-     * SQL editor / direct SQL execution.
-     */
     if (
       this.isSqlExecutionRoute(
-        routePath,
+        this.getRoutePath(
+          request,
+        ),
       )
     ) {
       await this.planUsageService.consumeSqlExecution(
         workspaceId,
+        userId,
       );
 
       return next.handle();

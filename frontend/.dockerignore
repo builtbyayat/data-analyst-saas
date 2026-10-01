@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+build
+
+.env
+.env.*
+!.env.example
+
+*.log
+*.tsbuildinfo
+
+.vscode
+.idea
+
+.git
+.gitignore

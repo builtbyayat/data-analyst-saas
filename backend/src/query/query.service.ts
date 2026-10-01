@@ -1,4 +1,4 @@
-import { createPythonWorkerEnv } from '../security/child-process-env.js';
+﻿import { createPythonWorkerEnv } from '../security/child-process-env.js';
 
 import {
   BadRequestException,
@@ -701,7 +701,7 @@ Preserve the original question's language, script, transliteration, and mixed-la
             .map((line) =>
               line
                 .replace(
-                  /^\s*(?:[-*•]\s+|\d+[.)]\s+)/,
+                  /^\s*(?:[-*â€¢]\s+|\d+[.)]\s+)/,
                   '',
                 )
                 .replace(
@@ -1126,7 +1126,7 @@ RELATIONSHIP CANDIDATES:
     const lines =
       candidates.map(
         (candidate) =>
-          `- ${candidate.leftRelation}.${candidate.leftColumn} ↔ ${candidate.rightRelation}.${candidate.rightColumn} | ${candidate.reason}`,
+          `- ${candidate.leftRelation}.${candidate.leftColumn} â†” ${candidate.rightRelation}.${candidate.rightColumn} | ${candidate.reason}`,
       );
 
     return `
@@ -1260,109 +1260,83 @@ ${lines.join('\n')}
   // MULTI-DATASET AI PROMPTS
   // ==========================================
 
-  private buildMultiDatasetSystemPrompt(): string {
-    return `
+private buildMultiDatasetSystemPrompt(): string {
+  return `
 You are the multi-dataset SQL generation engine for an AI Data Analyst.
 
-Your task is to convert the user's natural-language request into exactly ONE valid DuckDB SQL statement that analyzes the selected uploaded datasets.
+Your task is to understand the user's complete natural-language request and produce exactly one valid DuckDB read-only SQL statement over the datasets selected in the current query context.
 
-OUTPUT:
-- Return SQL only.
-- Do not return Markdown.
-- Do not use code fences.
-- Do not prefix the response with "SQL:".
-- Return exactly one SQL statement.
-- The statement may contain a trailing semicolon.
-- Do not return explanations or extra text.
+SEMANTIC INTERPRETATION:
+- Interpret the user's request by meaning, not by literal keyword matching.
+- The user may write in any human language, script, locale, transliteration, slang, or mixed-language style.
+- Do not depend on a fixed vocabulary or language-specific rules.
+- Determine what datasets the requested operation semantically applies to.
+- The selected datasets are the complete runtime dataset context for this request.
 
-AVAILABLE RELATIONS:
-- Each selected dataset is exposed as one explicit SQL relation.
-- Relation names are provided in the current multi-dataset context.
-- These relations are the ONLY available dataset relations.
+DEFAULT DATASET SCOPE:
+- The currently selected datasets are the default scope of a multi-dataset request.
+- Choose "all_selected" when the requested operation applies to the selected datasets as a group, or when the request does not clearly identify a narrower subset.
+- Choose "selected_subset" only when the user's meaning clearly limits the operation to fewer than all selected datasets.
+- A vague or general request must not be silently reduced to the first selected dataset.
+- Never assume that dataset_1 is the default dataset merely because it is listed first.
+
+SCOPE MEANING:
+- "all_selected" means the requested operation applies to every currently selected dataset.
+- "selected_subset" means the requested operation applies only to the selected relations necessary for the specific request.
+- Determine scope from the complete user request and supplied context.
+- Do not determine scope through a hardcoded list of words.
+- Do not infer scope from dataset position alone.
+- Do not infer scope from filenames or display names alone.
+
+RUNTIME RELATION CONTRACT:
+- Each selected dataset is exposed through exactly one SQL relation explicitly supplied in the current context.
+- These runtime relation names are the only dataset relations available to SQL.
+- Dataset display names and original filenames are metadata, not SQL relations.
 - Never invent a physical table.
-- Never invent a dataset relation.
-- Never replace a selected relation with an unrelated relation.
+- Never invent a SQL relation.
+- Never invent a column.
+- Never invent a value.
+- Never invent a relationship.
 
-CRITICAL DATASET-SCOPE RULE:
+RELATION USAGE:
+- If scope is "all_selected", every selected SQL relation must be represented in the generated SQL.
+- Do not answer from only the first selected relation when the semantic scope is "all_selected".
+- Do not silently ignore any selected relation.
+- If scope is "selected_subset", use only the relations actually required by the request.
+- Do not add unnecessary relations.
 
-If the user's request explicitly refers to ALL, EACH, EVERY, SELECTED DATASETS, ALL FILES, EACH FILE, EVERY FILE, ACROSS DATASETS, COMPARE DATASETS, or COMBINE DATASETS, then EVERY selected relation MUST appear in the SQL.
-
-Examples:
-- "show the first 10 rows from each dataset"
-- "compare all selected datasets"
-- "compare every dataset"
-- "combine all datasets"
-- "show sales across all datasets"
-- "analyze each selected dataset"
-- "give me data from all files"
-- "compare selected datasets"
-
-When such wording is present:
-- DO NOT answer using only dataset_1.
-- DO NOT silently ignore dataset_2.
-- DO NOT silently ignore dataset_3.
-- DO NOT choose only the first dataset.
-- DO NOT discard a selected dataset.
-- EVERY selected relation must be referenced by the generated SQL.
-
-When the user clearly asks about only one dataset:
-- One relation is allowed.
-- Do not add unnecessary datasets.
-
-MULTI-DATASET RESULT DESIGN:
-- If compatible rows should be combined, prefer UNION ALL BY NAME.
-- If datasets need matching records, use a valid JOIN.
-- If datasets need comparison, preserve dataset identity where useful.
-- If totals need to span datasets, aggregate across every requested dataset.
-- If schemas differ, UNION ALL BY NAME can align columns by name and fill unavailable columns with NULL.
-- CTEs can be used when they make a multi-dataset query clearer.
-- Do not use JOIN merely because multiple datasets are selected.
-
-ADVANCED SQL:
-- JOIN
-- INNER JOIN
-- LEFT JOIN
-- RIGHT JOIN
-- FULL JOIN
-- CROSS JOIN
-- NATURAL JOIN
-- GROUP BY
-- HAVING
-- subqueries
-- correlated subqueries
-- EXISTS
-- NOT EXISTS
-- IN
-- NOT IN
-- CTEs
-- UNION
-- UNION ALL
-- UNION ALL BY NAME
-- INTERSECT
-- EXCEPT
-- window functions
-- window frames
-- ORDER BY
-- LIMIT
-- OFFSET
-- DISTINCT
-- QUALIFY
-- FILTER
-- CASE
-- CAST
-- DuckDB-supported functions
+MULTI-DATASET OPERATION PLANNING:
+- Determine whether the user wants rows from each dataset, a combined result, a comparison, an aggregate across datasets, or a relationship between datasets.
+- Preserve whether a requested operation is per-dataset or across the combined dataset scope.
+- Preserve the requested result cardinality.
+- A row limit that semantically applies independently to each dataset must be applied independently to each relevant relation before combining those results.
+- A row limit that semantically applies to the combined result must remain a combined-result limit.
+- When independently limited branches are combined with UNION, UNION ALL, UNION ALL BY NAME, INTERSECT, or EXCEPT, use a subquery or CTE for each branch so that the SQL is valid DuckDB SQL.
+- Use UNION ALL BY NAME when compatible rows should be combined across datasets.
+- Use JOINs only when the request requires matching records and a supported relationship exists.
+- Use aggregation across multiple relations when the request asks for totals, summaries, or comparisons spanning those datasets.
+- Preserve dataset identity in the result when that is useful to represent per-dataset output or comparison.
 
 RELATIONSHIP RULES:
-- Relationship candidates are heuristic evidence only.
-- They are NOT declared foreign keys.
-- Prefer explicit matching keys and clear user intent.
+- Relationship candidates supplied in the runtime context are heuristic evidence only.
+- They are not declared foreign keys.
+- Use them only when they fit the user's actual request.
 - Do not invent foreign keys.
-- Do not invent business meaning.
-- Do not join datasets merely because their names sound related.
+- Do not invent business semantics.
+- Do not join datasets merely because names look related.
 - Do not join incompatible columns.
-- Do not invent relationships when no evidence exists.
+- Do not invent relationships when the available evidence does not support them.
 
-CORRECTNESS:
+READ-ONLY SECURITY:
+- Generate read-only SQL only.
+- Never modify data, schema, catalog state, or external resources.
+- Never access arbitrary local files or remote URLs.
+- Never use external file-reading functions.
+- Never generate multiple SQL statements.
+- Use only the explicitly supplied runtime relations.
+- Preserve all security restrictions enforced by the application.
+
+SQL CORRECTNESS:
 - Use only columns present in the supplied schemas.
 - Preserve exact column names.
 - Quote identifiers when necessary.
@@ -1373,45 +1347,50 @@ CORRECTNESS:
 - Ensure subqueries return compatible values.
 - Ensure CTE names are valid.
 - Ensure window expressions are valid.
-- Never invent tables.
-- Never invent columns.
-- Never invent values.
-- Never invent relationships.
+- Never invent tables, columns, values, or relationships.
 - Never silently remove requested operations.
 
 LANGUAGE:
 - Understand English, Hindi, Hinglish, transliterated language, native scripts, slang, and mixed-language requests.
 - SQL output must always remain valid SQL.
 
-FINAL RULE:
-Return exactly one valid DuckDB SQL statement and nothing else.
+OUTPUT CONTRACT:
+Return exactly one JSON object and nothing else:
+
+{
+  "scope": "all_selected" | "selected_subset",
+  "sql": "<one valid DuckDB read-only SQL statement>"
+}
+
+Return JSON only.
+No Markdown.
+No code fences.
+No explanation.
 `.trim();
-  }
+}
+private buildMultiDatasetUserPrompt(
+  question: string,
+  entries: MultiDatasetContextEntry[],
+): string {
+  const schemaPrompt =
+    this.buildMultiDatasetSchemaPrompt(
+      entries,
+    );
 
-  private buildMultiDatasetUserPrompt(
-    question: string,
-    entries: MultiDatasetContextEntry[],
-    requiresAllDatasets: boolean,
-  ): string {
-    const schemaPrompt =
-      this.buildMultiDatasetSchemaPrompt(
-        entries,
-      );
+  const relationshipPrompt =
+    this.buildMultiDatasetRelationshipPrompt(
+      entries,
+    );
 
-    const relationshipPrompt =
-      this.buildMultiDatasetRelationshipPrompt(
-        entries,
-      );
+const relationList =
+  entries
+    .map(
+      (entry) =>
+        `- SQL relation: ${entry.relationName} | dataset label: ${entry.dataset.name} | filename: ${entry.dataset.originalFilename}`,
+    )
+    .join('\n');
 
-    const relationList =
-      entries
-        .map(
-          (entry) =>
-            `- ${entry.relationName} = ${entry.dataset.name}`,
-        )
-        .join('\n');
-
-    return `
+  return `
 SELECTED DATASETS:
 ${schemaPrompt}
 
@@ -1423,57 +1402,44 @@ ${relationList}
 CURRENT USER REQUEST:
 ${question}
 
-REQUEST SCOPE:
-${
-  requiresAllDatasets
-    ? `
-THE USER EXPLICITLY REQUESTED ALL/EACH/EVERY SELECTED DATASET.
+SEMANTIC PLANNING:
+Interpret the complete user request before generating SQL.
 
-MANDATORY:
-EVERY AVAILABLE SQL RELATION listed above MUST be referenced
-by the generated SQL.
+Determine:
+1. Which selected datasets the request applies to.
+2. Whether the operation is per-dataset or across a combined dataset scope.
+3. Whether requested limits apply independently to each dataset or to the combined result.
+4. Which relational operation best represents the user's intent.
 
-DO NOT:
-- answer from only dataset_1
-- ignore dataset_2
-- ignore dataset_3
-- choose the first dataset only
-- silently drop any selected dataset
+SCOPE DECISION:
+- Use "all_selected" when the operation applies to every currently selected dataset.
+- Use "selected_subset" only when the request clearly narrows the operation to fewer than all selected datasets.
+- When the request is general and does not identify a narrower subset, use "all_selected".
+- Never silently reduce a general multi-dataset request to the first selected dataset.
+- Do not use literal keyword matching to determine scope.
 
-If compatible rows need to be combined, use UNION ALL BY NAME.
-If records need to be matched, use an evidence-based JOIN.
-If comparison is needed, preserve dataset identity where useful.
-`
-    : `
-The user did not explicitly require every selected dataset.
+RELATION IDENTIFIER RULE:
+- Only the value after "SQL relation:" is a legal SQL relation identifier.
+- The dataset label and filename are descriptive metadata only.
+- Never place a dataset label or filename in SQL.
 
-Use only the dataset relations actually required by the request.
-Do not add unnecessary joins or relations.
-`
-}
+SQL RELATION RULE:
+- Use only the SQL relation identifiers listed above.
+- Dataset display names and original filenames are descriptive metadata only.
+- Do not use a dataset name or filename as a SQL relation unless that exact value is explicitly listed as a supplied SQL relation.
+- When the semantic scope is "all_selected", every applicable selected relation must be represented in the SQL.
+- Never invent a physical table, relation, column, value, or relationship.
 
-INSTRUCTIONS:
-- The current request is the highest-priority instruction.
-- Use only selected dataset relations.
-- Use only actual schema columns.
-- Use multiple relations when required by the request.
-- Preserve requested filters.
-- Preserve requested grouping.
-- Preserve requested aggregation.
-- Preserve requested ordering.
-- Preserve requested limits.
-- Preserve requested JOINs.
-- Preserve requested subqueries.
-- Preserve requested CTEs.
-- Preserve requested window functions.
-- Never invent a physical table.
-- Never invent a column.
-- Never invent a relationship.
-- Never invent a value.
-- Return exactly one valid DuckDB SQL statement.
-- Return SQL only.
+LIMIT AND COMBINATION RULE:
+- Preserve the exact semantic meaning of requested limits.
+- When the user asks for a limited result from each selected dataset, apply that limit independently to each applicable relation.
+- When independently limited results are combined with a set operator, wrap each limited branch in a subquery or CTE.
+- Do not place a branch-local LIMIT directly on a UNION branch when DuckDB requires a wrapper.
+
+OUTPUT:
+Return exactly one JSON object matching the required output contract.
 `.trim();
-  }
+}
 
   private escapeSqlStringLiteral(
     value: string,
@@ -2807,91 +2773,90 @@ INSTRUCTIONS:
   // MULTI-DATASET GENERATION
   // ==========================================
 
-  async generateSqlForMultipleDatasets(
-    datasetIds: string[],
-    workspaceId: string,
-    userId: string,
-    question: string,
-    conversationId?: string | null,
-  ): Promise<MultiDatasetSqlGenerationResult> {
-    const normalizedQuestion =
-      question.trim();
+async generateSqlForMultipleDatasets(
+  datasetIds: string[],
+  workspaceId: string,
+  userId: string,
+  question: string,
+  conversationId?: string | null,
+): Promise<MultiDatasetSqlGenerationResult> {
+  const normalizedQuestion =
+    question.trim();
 
-    if (!normalizedQuestion) {
-      throw new BadRequestException(
-        'Natural-language question is required',
+  if (!normalizedQuestion) {
+    throw new BadRequestException(
+      'Natural-language question is required',
+    );
+  }
+
+  if (
+    normalizedQuestion.length >
+    4000
+  ) {
+    throw new BadRequestException(
+      'Natural-language question is too long',
+    );
+  }
+
+  const entries =
+    await this.getMultipleDatasetContexts(
+      datasetIds,
+      workspaceId,
+    );
+
+  const previewSql =
+    this.buildSimpleMultiDatasetPreviewSql(
+      normalizedQuestion,
+      entries,
+    );
+
+  if (previewSql) {
+    const validatedSql =
+      this.sqlValidatorService.validate(
+        previewSql,
       );
-    }
 
-    if (
-      normalizedQuestion.length >
-      4000
-    ) {
-      throw new BadRequestException(
-        'Natural-language question is too long',
-      );
-    }
-
-    const entries =
-      await this.getMultipleDatasetContexts(
-        datasetIds,
-        workspaceId,
-      );
-
-    const previewSql =
-      this.buildSimpleMultiDatasetPreviewSql(
+    return {
+      question:
         normalizedQuestion,
-        entries,
-      );
 
-    if (previewSql) {
-      const validatedSql =
-        this.sqlValidatorService.validate(
-          previewSql,
-        );
+      sql:
+        validatedSql,
 
-      return {
-        question:
-          normalizedQuestion,
+      provider:
+        'local',
 
-        sql:
-          validatedSql,
+      model:
+        null,
+    };
+  }
 
-        provider:
-          'local',
+  const requiresAllDatasets =
+    this.questionRequiresAllDatasets(
+      normalizedQuestion,
+    );
 
-        model:
-          null,
-      };
-    }
+  const relationshipCandidates =
+    this.buildRelationshipCandidates(
+      entries,
+    );
 
-    const requiresAllDatasets =
-      this.questionRequiresAllDatasets(
-        normalizedQuestion,
-      );
+  const previousContext =
+    await this.getMultiDatasetConversationContext(
+      workspaceId,
+      userId,
+      conversationId,
+      entries,
+    );
 
-    const relationshipCandidates =
-      this.buildRelationshipCandidates(
-        entries,
-      );
+  const systemPrompt =
+    this.buildMultiDatasetSystemPrompt();
 
-    const previousContext =
-      await this.getMultiDatasetConversationContext(
-        workspaceId,
-        userId,
-        conversationId,
-        entries,
-      );
-
-    const systemPrompt =
-      this.buildMultiDatasetSystemPrompt();
-
-    const userPrompt =
-      `
+  const userPrompt =
+    `
 ${this.buildMultiDatasetUserPrompt(
   normalizedQuestion,
   entries,
-  requiresAllDatasets,
 )}
 
 ${previousContext}
@@ -2902,60 +2867,358 @@ ${relationshipCandidates.length}
 Generate exactly one SQL statement.
 `.trim();
 
-    const generated =
-      await this.aiService.generateText({
-        systemPrompt,
-        userPrompt,
-        temperature: 0,
-        maxOutputTokens: 2500,
-      });
+const generated =
+  await this.aiService.generateText({
+    systemPrompt,
+    userPrompt,
+    temperature: 0,
+    maxOutputTokens: 1600,
 
-    let generatedSql =
-      this.normalizeGeneratedSql(
-        generated.text,
-      );
+    responseMimeType:
+      'application/json',
 
-    if (!generatedSql) {
-      throw new BadRequestException(
-        'AI provider returned empty SQL',
-      );
-    }
+    responseSchema: {
+      type: 'object',
 
+      properties: {
+        scope: {
+          type: 'string',
+          enum: [
+            'all_selected',
+            'selected_subset',
+          ],
+        },
+
+        sql: {
+          type: 'string',
+        },
+      },
+
+      required: [
+        'scope',
+        'sql',
+      ],
+
+      additionalProperties:
+        false,
+    },
+  });
+
+  let generatedSql =
+    this.normalizeGeneratedSql(
+      generated.text,
+    );
+
+  if (!generatedSql) {
+    throw new BadRequestException(
+      'AI provider returned empty SQL',
+    );
+  }
+
+  let generationProvider =
+    generated.provider;
+
+  let generationModel =
+    generated.model;
+
+  /*
+   * Validate the generated SQL in two layers:
+   *
+   * 1. SqlValidatorService:
+   *    - read-only enforcement
+   *    - blocked functions
+   *    - blocked relations
+   *    - multi-statement protection
+   *
+   * 2. DuckDB validation:
+   *    - parser errors
+   *    - binder errors
+   *    - invalid SQL syntax
+   *    - invalid relation/column usage
+   *    - DuckDB-specific SQL errors
+   *
+   * The security validator must remain strict. We never
+   * strip or silently rewrite unsafe SQL.
+   */
+  let generationValidationError:
+    string | null = null;
+
+  try {
     generatedSql =
       this.sqlValidatorService.validate(
         generatedSql,
       );
+  } catch (
+    error
+  ) {
+    generationValidationError =
+      this.getErrorMessage(
+        error,
+      );
+  }
+
+  if (!generationValidationError) {
+    const duckDbValidation =
+      await this.validateSqlForMultipleDatasets(
+        datasetIds,
+        workspaceId,
+        generatedSql,
+      );
 
     if (
-      requiresAllDatasets &&
-      !this.sqlReferencesAllRelations(
-        generatedSql,
-        entries,
-      )
+      !duckDbValidation.valid
     ) {
-      const missingEntries =
-        this.getMissingRelations(
-          generatedSql,
-          entries,
+      const validationParts =
+        [
+          duckDbValidation.message
+            ? `message: ${duckDbValidation.message}`
+            : null,
+
+          duckDbValidation.line !== null
+            ? `line: ${duckDbValidation.line}`
+            : null,
+
+          duckDbValidation.column !== null
+            ? `column: ${duckDbValidation.column}`
+            : null,
+        ].filter(
+          (
+            value,
+          ): value is string =>
+            Boolean(value),
         );
 
-      const missingRelations =
-        missingEntries
-          .map(
-            (entry) =>
-              `- ${entry.relationName} = ${entry.dataset.name}`,
-          )
-          .join('\n');
+      generationValidationError =
+        validationParts.join(
+          '\n',
+        ) ||
+        'DuckDB SQL validation failed';
+    }
+  }
 
-      const selectedRelations =
-        entries
-          .map(
-            (entry) =>
-              `- ${entry.relationName} = ${entry.dataset.name}`,
-          )
-          .join('\n');
+  /*
+   * AI correction is deliberately bounded to one attempt.
+   *
+   * This handles:
+   * - multiple statements
+   * - parser errors
+   * - invalid UNION branch syntax
+   * - invalid LIMIT/OFFSET placement
+   * - binder errors
+   * - invalid columns
+   * - other DuckDB-specific generation mistakes
+   */
+  if (
+    generationValidationError
+  ) {
+    const selectedRelations =
+      entries
+        .map(
+          (entry) =>
+            `- ${entry.relationName} = ${entry.dataset.name}`,
+        )
+        .join('\n');
 
-      const correctionPrompt = `
+    const correctionPrompt = `
+The previous AI-generated SQL failed validation.
+
+USER REQUEST:
+${normalizedQuestion}
+
+SELECTED DATASETS / RELATIONS:
+${selectedRelations}
+
+PREVIOUS SQL:
+${generatedSql}
+
+VALIDATION ERROR:
+${generationValidationError}
+
+You MUST regenerate the SQL.
+
+MANDATORY:
+- Return exactly ONE valid DuckDB SQL statement.
+- Return SQL only.
+- Do not return Markdown.
+- Do not return explanations.
+- Do not return multiple SQL statements.
+- Do not put meaningful text after the SQL.
+- A final semicolon is optional.
+
+SQL SAFETY:
+- Use only SELECT, WITH, VALUES, EXPLAIN, DESCRIBE, or SUMMARIZE as appropriate.
+- Do not use CREATE.
+- Do not use INSERT.
+- Do not use UPDATE.
+- Do not use DELETE.
+- Do not use MERGE.
+- Do not use DROP.
+- Do not use ALTER.
+- Do not use SET.
+- Do not use RESET.
+- Do not use USE.
+- Do not use ATTACH.
+- Do not use DETACH.
+- Do not use COPY.
+- Do not use INSTALL.
+- Do not use LOAD.
+- Do not use EXPORT.
+- Do not use IMPORT.
+- Do not use external file-reading functions.
+
+DATASET RULES:
+- Use only the supplied dataset relations.
+- Use only columns from the supplied schemas.
+- Do not invent tables.
+- Do not invent columns.
+- Do not invent relationships.
+- Preserve the user's analytical intent.
+
+UNION / LIMIT RULE:
+- UNION, UNION ALL, and UNION ALL BY NAME must form valid DuckDB syntax.
+- Do NOT place LIMIT, OFFSET, or branch-local ORDER BY directly on a SELECT branch of a UNION.
+- When an individual UNION branch needs LIMIT or OFFSET, wrap that branch in a subquery or CTE.
+- Example pattern:
+  SELECT * FROM (
+    SELECT *
+    FROM dataset_1
+    LIMIT 5
+  )
+  UNION ALL BY NAME
+  SELECT * FROM (
+    SELECT *
+    FROM dataset_2
+    LIMIT 5
+  )
+
+JOIN RULES:
+- Use JOINs only when supported by the supplied relationship evidence.
+- Do not invent foreign keys.
+- Do not join datasets merely because their names look related.
+
+FINAL RULE:
+Return exactly one valid DuckDB SQL statement and nothing else.
+`.trim();
+
+    const corrected =
+      await this.aiService.generateText({
+        systemPrompt,
+        userPrompt:
+          correctionPrompt,
+        temperature: 0,
+        maxOutputTokens: 2500,
+      });
+
+    const correctedSql =
+      this.normalizeGeneratedSql(
+        corrected.text,
+      );
+
+    if (!correctedSql) {
+      throw new BadRequestException(
+        'AI provider returned empty SQL during multi-dataset SQL correction',
+      );
+    }
+
+    let validatedCorrectedSql:
+      string;
+
+    try {
+      validatedCorrectedSql =
+        this.sqlValidatorService.validate(
+          correctedSql,
+        );
+    } catch (
+      error
+    ) {
+      throw new BadRequestException(
+        `AI-generated SQL correction failed security validation: ${this.getErrorMessage(error)}`,
+      );
+    }
+
+    const correctedDuckDbValidation =
+      await this.validateSqlForMultipleDatasets(
+        datasetIds,
+        workspaceId,
+        validatedCorrectedSql,
+      );
+
+    if (
+      !correctedDuckDbValidation.valid
+    ) {
+      const validationParts =
+        [
+          correctedDuckDbValidation.message
+            ? `message: ${correctedDuckDbValidation.message}`
+            : null,
+
+          correctedDuckDbValidation.line !== null
+            ? `line: ${correctedDuckDbValidation.line}`
+            : null,
+
+          correctedDuckDbValidation.column !== null
+            ? `column: ${correctedDuckDbValidation.column}`
+            : null,
+        ].filter(
+          (
+            value,
+          ): value is string =>
+            Boolean(value),
+        );
+
+      throw new BadRequestException(
+        `AI-generated SQL correction failed DuckDB validation: ${
+          validationParts.join('\n') ||
+          'DuckDB SQL validation failed'
+        }`,
+      );
+    }
+
+    generatedSql =
+      validatedCorrectedSql;
+
+    generationProvider =
+      corrected.provider;
+
+    generationModel =
+      corrected.model;
+  }
+
+  /*
+   * If the user explicitly requested every selected
+   * dataset, enforce dataset coverage after all SQL
+   * syntax/security validation has succeeded.
+   */
+  if (
+    requiresAllDatasets &&
+    !this.sqlReferencesAllRelations(
+      generatedSql,
+      entries,
+    )
+  ) {
+    const missingEntries =
+      this.getMissingRelations(
+        generatedSql,
+        entries,
+      );
+
+    const missingRelations =
+      missingEntries
+        .map(
+          (entry) =>
+            `- ${entry.relationName} = ${entry.dataset.name}`,
+        )
+        .join('\n');
+
+    const selectedRelations =
+      entries
+        .map(
+          (entry) =>
+            `- ${entry.relationName} = ${entry.dataset.name}`,
+        )
+        .join('\n');
+
+    const correctionPrompt = `
 The previous SQL is INVALID FOR THE USER'S REQUEST because the user explicitly requested analysis across ALL selected datasets.
 
 USER REQUEST:
@@ -2975,96 +3238,180 @@ You MUST correct the SQL.
 MANDATORY:
 - Every selected relation MUST appear in the corrected SQL.
 - Do NOT answer using only dataset_1.
-- Do NOT ignore any selected dataset.
-- Do NOT silently discard dataset_2, dataset_3, or any other selected relation.
+- Do NOT ignore dataset_2.
+- Do NOT ignore dataset_3.
+- Do NOT silently discard any selected dataset.
 - Preserve the user's requested analytical intent.
-- Use UNION ALL BY NAME when combining compatible rows.
+- Use UNION ALL BY NAME when compatible rows need to be combined.
 - Use JOINs only when a valid relationship exists.
 - Use CTEs when useful.
 - Use only columns from the supplied schemas.
 - Do not invent tables.
 - Do not invent columns.
 - Do not invent relationships.
+
+UNION / LIMIT RULE:
+- Return valid DuckDB SQL.
+- Do not put LIMIT, OFFSET, or branch-local ORDER BY directly on a UNION branch.
+- Wrap limited UNION branches in subqueries or CTEs.
+
+OUTPUT RULE:
 - Return exactly ONE valid DuckDB SQL statement.
 - Return SQL only.
+- Do not return Markdown.
+- Do not return explanations.
+- Do not return multiple statements.
 `.trim();
 
-      const corrected =
-        await this.aiService.generateText({
-          systemPrompt,
-          userPrompt:
-            correctionPrompt,
-          temperature: 0,
-          maxOutputTokens: 2500,
-        });
+const corrected =
+  await this.aiService.generateText({
+    systemPrompt,
+    userPrompt:
+    correctionPrompt,
+    temperature: 0,
+    maxOutputTokens: 1600,
 
-      const correctedSql =
-        this.normalizeGeneratedSql(
-          corrected.text,
-        );
+    responseMimeType:
+      'application/json',
 
-      if (!correctedSql) {
-        throw new BadRequestException(
-          'AI provider returned empty SQL during multi-dataset correction',
-        );
-      }
+    responseSchema: {
+      type: 'object',
 
-      generatedSql =
+      properties: {
+        scope: {
+          type: 'string',
+          enum: [
+            'all_selected',
+            'selected_subset',
+          ],
+        },
+
+        sql: {
+          type: 'string',
+        },
+      },
+
+      required: [
+        'scope',
+        'sql',
+      ],
+
+      additionalProperties:
+        false,
+    },
+  });
+
+    const correctedSql =
+      this.normalizeGeneratedSql(
+        corrected.text,
+      );
+
+    if (!correctedSql) {
+      throw new BadRequestException(
+        'AI provider returned empty SQL during multi-dataset scope correction',
+      );
+    }
+
+    let validatedCorrectedSql:
+      string;
+
+    try {
+      validatedCorrectedSql =
         this.sqlValidatorService.validate(
           correctedSql,
         );
-
-      if (
-        !this.sqlReferencesAllRelations(
-          generatedSql,
-          entries,
-        )
-      ) {
-        const stillMissing =
-          this.getMissingRelations(
-            generatedSql,
-            entries,
-          )
-            .map(
-              (entry) =>
-                entry.dataset.name,
-            )
-            .join(', ');
-
-        throw new BadRequestException(
-          `AI generated SQL did not reference all selected datasets. Missing: ${stillMissing}`,
-        );
-      }
-
-      return {
-        question:
-          normalizedQuestion,
-
-        sql:
-          generatedSql,
-
-        provider:
-          corrected.provider,
-
-        model:
-          corrected.model,
-      };
+    } catch (
+      error
+    ) {
+      throw new BadRequestException(
+        `AI-generated scope correction failed security validation: ${this.getErrorMessage(error)}`,
+      );
     }
 
-    return {
-      question:
-        normalizedQuestion,
+    const correctedDuckDbValidation =
+      await this.validateSqlForMultipleDatasets(
+        datasetIds,
+        workspaceId,
+        validatedCorrectedSql,
+      );
 
-      sql:
-        generatedSql,
+    if (
+      !correctedDuckDbValidation.valid
+    ) {
+      const validationParts =
+        [
+          correctedDuckDbValidation.message
+            ? `message: ${correctedDuckDbValidation.message}`
+            : null,
 
-      provider:
-        generated.provider,
+          correctedDuckDbValidation.line !== null
+            ? `line: ${correctedDuckDbValidation.line}`
+            : null,
 
-      model:
-        generated.model,
-    };
+          correctedDuckDbValidation.column !== null
+            ? `column: ${correctedDuckDbValidation.column}`
+            : null,
+        ].filter(
+          (
+            value,
+          ): value is string =>
+            Boolean(value),
+        );
+
+      throw new BadRequestException(
+        `AI-generated scope correction failed DuckDB validation: ${
+          validationParts.join('\n') ||
+          'DuckDB SQL validation failed'
+        }`,
+      );
+    }
+
+    if (
+      !this.sqlReferencesAllRelations(
+        validatedCorrectedSql,
+        entries,
+      )
+    ) {
+      const stillMissing =
+        this.getMissingRelations(
+          validatedCorrectedSql,
+          entries,
+        )
+          .map(
+            (entry) =>
+              entry.dataset.name,
+          )
+          .join(', ');
+
+      throw new BadRequestException(
+        `AI generated SQL did not reference all selected datasets. Missing: ${stillMissing}`,
+      );
+    }
+
+    generatedSql =
+      validatedCorrectedSql;
+
+    generationProvider =
+      corrected.provider;
+
+    generationModel =
+      corrected.model;
   }
+
+  return {
+    question:
+      normalizedQuestion,
+
+    sql:
+      generatedSql,
+
+    provider:
+      generationProvider,
+
+    model:
+      generationModel,
+  };
+}
 
   // ==========================================
   // MULTI-DATASET CONVERSATION CONTEXT
@@ -4148,45 +4495,100 @@ CONTEXT RULES:
   // SQL NORMALIZATION
   // ==========================================
 
-  private normalizeGeneratedSql(
-    value: string,
-  ): string {
-    let sql =
-      value.trim();
+private normalizeGeneratedSql(
+  value: string,
+): string {
+  let sql =
+    value.trim();
 
-    if (!sql) {
-      return '';
-    }
+  if (!sql) {
+    return '';
+  }
 
-    if (
-      sql.startsWith(
-        '\uFEFF',
-      )
-    ) {
-      sql =
-        sql
-          .slice(1)
-          .trim();
-    }
-
-    const fencedMatch =
-      sql.match(
-        /^```(?:sql)?\s*([\s\S]*?)\s*```$/i,
-      );
-
-    if (fencedMatch) {
-      sql =
-        fencedMatch[1].trim();
-    }
-
+  if (
+    sql.startsWith(
+      '\uFEFF',
+    )
+  ) {
     sql =
       sql
-        .replace(
-          /^SQL\s*:\s*/i,
-          '',
-        )
+        .slice(1)
         .trim();
-
-    return sql;
   }
+
+  const fencedMatch =
+    sql.match(
+      /^```(?:sql|json)?\s*([\s\S]*?)\s*```$/i,
+    );
+
+  if (fencedMatch) {
+    sql =
+      fencedMatch[1].trim();
+  }
+
+  /*
+   * Gemini structured output returns JSON such as:
+   *
+   * {
+   *   "scope": "all_selected",
+   *   "sql": "SELECT ..."
+   * }
+   *
+   * Extract only the SQL field before validation.
+   */
+  if (
+    sql.startsWith('{') &&
+    sql.endsWith('}')
+  ) {
+    try {
+      const parsed: unknown =
+        JSON.parse(sql);
+
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'sql' in parsed
+      ) {
+        const parsedSql =
+          (parsed as {
+            sql?: unknown;
+          }).sql;
+
+        if (
+          typeof parsedSql === 'string'
+        ) {
+          sql =
+            parsedSql.trim();
+        }
+      }
+    } catch {
+      // Keep original value.
+      // Security validation will reject malformed output.
+    }
+  }
+
+  /*
+   * Gemini may still wrap the extracted SQL in a fence.
+   */
+  const extractedFencedMatch =
+    sql.match(
+      /^```(?:sql)?\s*([\s\S]*?)\s*```$/i,
+    );
+
+  if (extractedFencedMatch) {
+    sql =
+      extractedFencedMatch[1].trim();
+  }
+
+  sql =
+    sql
+      .replace(
+        /^SQL\s*:\s*/i,
+        '',
+      )
+      .trim();
+
+  return sql;
 }
+}
+

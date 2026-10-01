@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   Entity,
@@ -7,7 +7,9 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 import { Workspace } from '../workspaces/workspace.entity.js';
-import { AgentSession } from './agent-session.entity.js';
+import type { AgentSession } from './agent-session.entity.js';
+import type { Relation } from 'typeorm';
+import type { Relation } from 'typeorm';
 
 @Entity('agent_tasks')
 export class AgentTask {
@@ -17,8 +19,8 @@ export class AgentTask {
   @Column({ type: 'uuid' })
   sessionId!: string;
 
-  @ManyToOne(() => AgentSession, (session) => session.tasks, { onDelete: 'CASCADE' })
-  session!: AgentSession;
+  @ManyToOne('AgentSession', 'tasks', { onDelete: 'CASCADE' })
+  session!: Relation<AgentSession>;
 
   @Column({ type: 'uuid' })
   workspaceId!: string;
@@ -56,3 +58,4 @@ export class AgentTask {
   @UpdateDateColumn()
   updatedAt!: Date;
 }
+

@@ -192,6 +192,7 @@ export class FastAiQueryService {
      */
     await this.planUsageService.consumeAiQuery(
       workspaceId,
+      userId,
     );
 
     const conversationContext =

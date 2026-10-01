@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   Entity,
@@ -9,7 +9,9 @@ import {
 } from 'typeorm';
 import { Workspace } from '../workspaces/workspace.entity.js';
 import { User } from '../users/user.entity.js';
-import { AgentTask } from './agent-task.entity.js';
+import type { AgentTask } from './agent-task.entity.js';
+import type { Relation } from 'typeorm';
+import type { Relation } from 'typeorm';
 
 @Entity('agent_sessions')
 export class AgentSession {
@@ -34,8 +36,8 @@ export class AgentSession {
   @Column({ type: 'varchar', length: 50, default: 'active' })
   status!: string;
 
-  @OneToMany(() => AgentTask, (task) => task.session)
-  tasks!: AgentTask[];
+  @OneToMany('AgentTask', 'session')
+  tasks!: Relation<AgentTask[]>;
 
   @CreateDateColumn()
   createdAt!: Date;
@@ -43,3 +45,4 @@ export class AgentSession {
   @UpdateDateColumn()
   updatedAt!: Date;
 }
+
